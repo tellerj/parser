@@ -30,10 +30,41 @@ flowchart LR
     style E stroke-dasharray: 5 5
 ```
 
-The parser is stateless across runs — it holds track state in memory
-for the duration of a session, but nothing persists when the process
-exits. Re-processing a PCAP produces identical output. This makes the
-tool a pure function of its input: PCAP in, structured data out.
+### Why there is no "SocketSource"
+
+This tool **does not capture packets from the network**. It only reads
+captures — either files on disk or a PCAP stream piped to stdin. The
+actual packet capture is always performed by an external tool (tcpdump,
+tshark, dumpcap, Wireshark, etc.).
+
+This is a deliberate boundary:
+
+- **No elevated privileges required.** Packet capture needs root or
+  `CAP_NET_RAW`. This tool runs as a normal user.
+- **No native dependencies.** Capture APIs are OS-specific (libpcap,
+  AF_PACKET, WinPcap). This tool uses only the Python standard library.
+- **Same tool for live and historical data.** A file from last month
+  and a pipe from a live interface both enter as the same byte format.
+- **Portability.** Runs anywhere Python runs, regardless of OS or
+  network stack.
+
+For live monitoring, the pattern is:
+
+```
+tcpdump -i eth0 -w - | link16-parser --pipe
+```
+
+The `-w -` flag tells tcpdump to write PCAP to stdout. The tool reads
+it from stdin. The user sets up the capture; the tool handles the
+parsing. This is a one-line setup, using tools operators are already
+familiar with.
+
+### Stateless across runs
+
+The parser holds track state in memory for the duration of a session,
+but nothing persists when the process exits. Re-processing a PCAP
+produces identical output. This makes the tool a pure function of its
+input: capture data in, structured track data out.
 
 A durable store (SQLite, flat files, etc.) would plug in as another
 output sink via the existing `OutputSink` / `on_update()` mechanism,
@@ -46,99 +77,62 @@ pipeline stages.
 
 ## Internal Data Flow
 
-The parser is a linear pipeline. Each stage consumes one data type and
-produces the next. No stage knows the internals of any other — they
-communicate only through the shared types defined in `core/types.py`.
+The parser is a linear pipeline of components. Each component consumes
+one data type and produces the next. No component knows the internals
+of any other — they communicate only through the shared types defined
+in `core/types.py` and the interfaces defined in `core/interfaces.py`.
 
 ```mermaid
 flowchart LR
-    A["PCAP Source<br/>(file or stdin pipe)"] -->|"(timestamp, bytes)"| B["Encapsulation<br/>Decoder"]
-    B -->|"RawJWord[]"| C["J-Word<br/>Parser"]
-    C -->|"Link16Message[]"| D["Track<br/>Database"]
-    D -->|"Track"| E["Output<br/>Formatter"]
-    E -->|"string"| F["User<br/>(interactive CLI)"]
-    D -->|"on_update callback"| G["Network<br/>Sink"]
-    G -->|"formatted string"| H["Remote<br/>Endpoint"]
+    A["Ingestion<br/><code>ingestion/</code>"] -->|"(timestamp, bytes)"| B["Encapsulation<br/><code>encapsulation/</code>"]
+    B -->|"RawJWord[]"| C["Link 16<br/><code>link16/</code>"]
+    C -->|"Link16Message[]"| D["Tracks<br/><code>tracks/</code>"]
+    D -->|"Track"| E["Output<br/><code>output/</code>"]
+    E -->|"string"| F["CLI<br/><code>cli/</code>"]
+    D -->|"on_update"| G["Network<br/><code>network/</code>"]
+    G -->|"formatted string"| E
 ```
 
-### Stage-by-stage
+### Component-by-component
 
-| Stage | Package | Input | Output | Notes |
-|-------|---------|-------|--------|-------|
-| **Ingestion** | `ingestion/` | PCAP bytes (file or pipe) | `(float, bytes)` tuples | Strips Ethernet/IP/UDP\|TCP headers. Optional `--port` filter. |
-| **Encapsulation** | `encapsulation/` | UDP/TCP payload bytes | `list[RawJWord]` | Pluggable: SIMPLE, SISO-J, JREAP-C, Auto |
-| **J-Word Parsing** | `link16/` | `list[RawJWord]` | `list[Link16Message]` | Header parsing (public) + message decoding (needs MIL-STD-6016) |
-| **Track DB** | `tracks/` | `Link16Message` | `Track` (stored) | In-memory, thread-safe, keyed by STN. Push notifications via `on_update()`. |
-| **Formatting** | `output/` | `Track` | `str` | Pluggable: TACREP, 9-LINE, future formats |
-| **CLI** | `cli/` | User commands | Formatted reports | Interactive shell, queries the Track DB (pull-based) |
-| **Network Streaming** | `network/` | `Track` (via callback) | Formatted bytes over TCP/UDP | Push-based: reacts to every track update via `on_update()` |
+| Component | Package | Interface | Input | Output | Notes |
+|-----------|---------|-----------|-------|--------|-------|
+| **Ingestion** | `ingestion/` | `PacketSource` | PCAP bytes (file or pipe) | `(float, bytes)` tuples | Strips Ethernet/IP headers. Optional `--port` filter. |
+| **Encapsulation** | `encapsulation/` | `EncapsulationDecoder` | UDP/TCP payload bytes | `list[RawJWord]` | Pluggable: SIMPLE, SISO-J, JREAP-C, Auto |
+| **Link 16** | `link16/` | `MessageDecoder` | `list[RawJWord]` | `list[Link16Message]` | Header parsing (public) + message decoding (needs MIL-STD-6016) |
+| **Tracks** | `tracks/` | — | `Link16Message` | `Track` (stored) | In-memory, thread-safe, keyed by STN. Push via `on_update()`. |
+| **Output** | `output/` | `OutputFormatter` | `Track` | `str` | Pluggable: TACREP, 9-LINE, future formats |
+| **CLI** | `cli/` | — | User commands | Formatted reports | Pull-based: queries Tracks, uses Output to format |
+| **Network** | `network/` | `OutputSink` | `Track` (via callback) | Bytes over TCP/UDP | Push-based: uses Output to format, streams to remote endpoint |
 
 ---
 
-## Module Map
+## Python Module Map
+
+Arrows point toward the dependency ("A → B" means A imports from B).
+Every package also imports from `core/` — those arrows are omitted to
+reduce clutter. `__main__.py` imports from every package to wire the
+pipeline together; it is the only module that knows about all components.
 
 ```mermaid
-graph TD
-    subgraph core["core/"]
-        types["types.py<br/>─────────<br/>Position, PlatformId,<br/>RawJWord, Link16Message,<br/>Track, Identity, WordFormat"]
-        interfaces["interfaces.py<br/>─────────<br/>PacketSource,<br/>EncapsulationDecoder,<br/>MessageDecoder,<br/>OutputFormatter,<br/>OutputSink"]
-    end
+graph TB
+    core["<b>core/</b><br/>shared types + interfaces"]
+    ingestion["<b>ingestion/</b><br/>PCAP file and pipe sources"]
+    encapsulation["<b>encapsulation/</b><br/>SIMPLE, SISO-J, JREAP-C, Auto"]
+    link16["<b>link16/</b><br/>J-word parser + message decoders"]
+    tracks["<b>tracks/</b><br/>TrackDatabase (on_update callbacks)"]
+    output["<b>output/</b><br/>TACREP, 9-LINE formatters"]
+    cli["<b>cli/</b><br/>InteractiveShell"]
+    network["<b>network/</b><br/>NetworkSink (TCP/UDP)"]
 
-    subgraph ingestion["ingestion/"]
-        pcap["pcap_reader.py<br/>─────────<br/>PcapFileSource<br/>PcapPipeSource<br/>(optional port filter)"]
-    end
-
-    subgraph encapsulation["encapsulation/"]
-        simple["simple.py<br/>SimpleDecoder"]
-        sisoj["siso_j.py<br/>SisoJDecoder"]
-        jreapc["jreap_c.py<br/>JreapCDecoder ⚠️ stub"]
-        detect["detect.py<br/>AutoDecoder"]
-    end
-
-    subgraph link16["link16/"]
-        parser["parser.py<br/>JWordParser"]
-        subgraph messages["messages/"]
-            j22["j2_2.py<br/>J2.2 Air PPLI ⚠️"]
-            j32["j3_2.py<br/>J3.2 Air Track ⚠️"]
-            j282["j28_2.py<br/>J28.2 Free Text ⚠️"]
-        end
-    end
-
-    subgraph tracks["tracks/"]
-        db["database.py<br/>TrackDatabase<br/>(on_update callbacks)"]
-    end
-
-    subgraph output["output/"]
-        coords["coords.py<br/>coordinate conversion"]
-        tacrep["tacrep.py<br/>TacrepFormatter"]
-        nineline["nineline.py<br/>NineLineFormatter"]
-    end
-
-    subgraph network["network/"]
-        netsink["sink.py<br/>NetworkSink<br/>(TCP/UDP streaming)"]
-    end
-
-    subgraph cli["cli/"]
-        shell["shell.py<br/>InteractiveShell"]
-    end
-
-    main["__main__.py<br/>wiring + entry point"]
-
-    pcap --> detect
-    detect --> simple & sisoj & jreapc
-    detect --> parser
-    parser --> j22 & j32 & j282
-    parser --> db
-    db --> shell
-    db -.->|"on_update"| netsink
-    netsink --> tacrep
-    shell --> tacrep & nineline
-    tacrep --> coords
-    nineline --> coords
-    main -.->|"wires"| pcap & detect & parser & db & shell & netsink
+    ingestion & encapsulation & link16 & tracks & output & cli & network -->|"imports"| core
+    cli -->|"queries"| tracks
+    cli -->|"uses"| output
+    network -->|"uses"| output
 ```
 
-Items marked **⚠️** are stubs awaiting MIL-STD-6016 access.
+Each box is a Python package. Internal structure (which files, which
+classes) is covered in the component-by-component sections below.
 
 ---
 
@@ -197,6 +191,12 @@ All threads share the `TrackDatabase`, protected by a single
 `threading.Lock`. The `on_track_update()` callback runs inside the DB
 lock and must not block — `NetworkSink` enqueues without waiting on I/O.
 
+In `--pipe` mode, `PipeSource` consumes stdin for PCAP data, so the
+interactive shell reads input from `/dev/tty` (the controlling terminal)
+instead. If no terminal is available (cron, Docker, CI), the tool runs
+in **headless mode**: ingestion only, no shell, exits when the source
+is exhausted or on Ctrl-C.
+
 ---
 
 ## The MIL-STD-6016 Boundary
@@ -249,6 +249,7 @@ new implementations without modifying existing code (beyond wiring).
 
 | Extension Point | Protocol | Where to add | How to register |
 |----------------|----------|--------------|-----------------|
+| **Capture format** | — | `ingestion/` | New `*_reader.py` + magic bytes in `reader._auto_detect_stream()` |
 | **Encapsulation format** | `EncapsulationDecoder` | `encapsulation/` | `detect.py` + `__main__.py` |
 | **Message type decoder** | `MessageDecoder` | `link16/messages/` | `__main__.py` → `parser.register()` |
 | **Output format** | `OutputFormatter` | `output/` | `__main__.py` → `formatters` dict |
@@ -266,11 +267,14 @@ parsing, and formatters use only the Python standard library (`struct`,
 `dataclasses`, `threading`). This keeps the tool deployable on minimal
 Linux environments without `pip install`.
 
-**Auto-detection over configuration.** The `AutoDecoder` inspects each
-packet's magic bytes to determine the encapsulation format. Users don't
-need to know (or specify) whether the capture uses SIMPLE vs.
-DIS vs. JREAP-C — it just works. Manual override is available via
-`--encap` for edge cases.
+**Auto-detection at every layer.** The same magic-bytes pattern is used
+twice in the pipeline. At the ingestion layer, `reader._auto_detect_stream()`
+reads the first 4 bytes of the capture to distinguish libpcap from pcapng
+and dispatches to the right format-specific reader. At the encapsulation
+layer, `AutoDecoder` inspects each packet's payload to determine SIMPLE
+vs. DIS vs. JREAP-C. Users don't need to know or specify any of this —
+it just works. Manual override is available via `--encap` for
+encapsulation edge cases.
 
 **Non-destructive track merging.** When `TrackDatabase.update()` receives
 a message, it only overwrites fields that are non-None. A J2.2 PPLI
@@ -352,7 +356,10 @@ link16-parser/
 │   │   ├── types.py             ← shared data types (the pipeline's currency)
 │   │   └── interfaces.py        ← Protocol definitions for pluggable modules
 │   ├── ingestion/
-│   │   └── pcap_reader.py       ← PCAP file + stdin pipe sources
+│   │   ├── __init__.py          ← "How to add a capture format or source"
+│   │   ├── reader.py            ← FileSource, PipeSource, format auto-detection
+│   │   ├── pcap_reader.py       ← libpcap format stream reader
+│   │   └── pcapng_reader.py     ← pcapng format stream reader (stub)
 │   ├── encapsulation/
 │   │   ├── __init__.py          ← "How to add an encapsulation format"
 │   │   ├── simple.py            ← STANAG 5602 (fully implemented)

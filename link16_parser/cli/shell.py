@@ -7,6 +7,7 @@ database in the background.
 from __future__ import annotations
 
 import shlex
+from collections.abc import Mapping
 from typing import TextIO
 import sys
 
@@ -30,7 +31,7 @@ class InteractiveShell:
     def __init__(
         self,
         track_db: TrackDatabase,
-        formatters: dict[str, OutputFormatter],
+        formatters: Mapping[str, OutputFormatter],
         default_format: str = "TACREP",
         input_stream: TextIO | None = None,
         output_stream: TextIO | None = None,
@@ -61,7 +62,12 @@ class InteractiveShell:
 
         while self._running:
             try:
-                line = input(">> ").strip()
+                self._output.write(">> ")
+                self._output.flush()
+                line = self._input.readline()
+                if not line:
+                    raise EOFError
+                line = line.strip()
             except (EOFError, KeyboardInterrupt):
                 self._print("\nExiting.")
                 break

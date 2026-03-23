@@ -92,7 +92,7 @@ class TrackDatabase:
 
             # Track number from message fields if provided
             tn = message.fields.get("track_number")
-            if tn is not None:
+            if isinstance(tn, str):
                 track.track_number = tn
 
             track.last_updated = message.timestamp
@@ -103,7 +103,12 @@ class TrackDatabase:
                 try:
                     listener(track, message)
                 except Exception:
-                    logger.exception("Track update listener error")
+                    listener_name = getattr(listener, "__qualname__", repr(listener))
+                    logger.exception(
+                        "Track update listener '%s' failed while processing "
+                        "STN %d (%s message)",
+                        listener_name, track.stn, message.msg_type,
+                    )
 
             return track
 

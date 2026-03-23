@@ -69,7 +69,7 @@ class TacrepFormatter:
         line3 = f"AIROP/{dtg}/{amount}/{nationality}/{subject_type}/{aircraft_type}/TN:{tn}/{location}//"
 
         # Line 4: Amplifying data (course/speed/altitude if available)
-        amp_parts = []
+        amp_parts: list[str] = []
         if track.heading_deg is not None:
             amp_parts.append(f"CRS:{track.heading_deg:.0f}")
         if track.speed_kph is not None:

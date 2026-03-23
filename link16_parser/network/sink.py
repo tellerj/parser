@@ -11,11 +11,15 @@ import logging
 import queue
 import socket
 import threading
+import time
 
 from link16_parser.core.interfaces import OutputFormatter
 from link16_parser.core.types import Link16Message, Track
 
 logger = logging.getLogger(__name__)
+
+# Only log queue-full warnings at most once per this many seconds
+_QUEUE_FULL_LOG_INTERVAL = 10.0
 
 
 class NetworkSink:
@@ -54,6 +58,8 @@ class NetworkSink:
         self._socket: socket.socket | None = None
         self._sender_thread: threading.Thread | None = None
         self._running = False
+        self._drop_count = 0
+        self._last_drop_log: float = 0.0
 
     @property
     def name(self) -> str:
@@ -68,13 +74,26 @@ class NetworkSink:
         """
         if self._protocol == "tcp":
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self._socket.connect((self._host, self._port))
+            try:
+                self._socket.connect((self._host, self._port))
+            except ConnectionRefusedError:
+                raise ConnectionRefusedError(
+                    f"Cannot connect to {self.name} — is the remote endpoint listening? "
+                    f"Check that --output-host and --output-port are correct."
+                )
+            except OSError as exc:
+                raise OSError(
+                    f"Cannot connect to {self.name}: {exc}. "
+                    f"Check that the host is reachable and the port is correct."
+                ) from exc
             logger.info("Connected to %s", self.name)
         elif self._protocol == "udp":
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             logger.info("UDP sink ready: %s", self.name)
         else:
-            raise ValueError(f"Unsupported protocol: {self._protocol}")
+            raise ValueError(
+                f"Unsupported protocol: '{self._protocol}'. Use 'tcp' or 'udp'."
+            )
 
         self._running = True
         self._sender_thread = threading.Thread(
@@ -109,12 +128,18 @@ class NetworkSink:
             self._socket = None
             logger.info("Closed %s", self.name)
 
+        if self._drop_count > 0:
+            logger.warning(
+                "Network sink %s dropped %d updates total during this session",
+                self.name, self._drop_count,
+            )
+
     def on_track_update(self, track: Track, message: Link16Message) -> None:
         """Enqueue a formatted track update for network delivery.
 
         Called inside the ``TrackDatabase`` lock. Enqueues without
         blocking — if the queue is full, the update is dropped with
-        a warning.
+        a throttled warning.
 
         Args:
             track: The updated track (post-merge state).
@@ -127,7 +152,15 @@ class NetworkSink:
         try:
             self._queue.put_nowait(formatted)
         except queue.Full:
-            logger.warning("Network sink queue full, dropping update for STN %d", track.stn)
+            self._drop_count += 1
+            now = time.monotonic()
+            if now - self._last_drop_log >= _QUEUE_FULL_LOG_INTERVAL:
+                logger.warning(
+                    "Network sink %s queue full — dropped %d updates so far "
+                    "(remote endpoint may be unreachable or too slow)",
+                    self.name, self._drop_count,
+                )
+                self._last_drop_log = now
 
     def _sender_loop(self) -> None:
         """Background thread: drain the queue and send over the socket."""
@@ -150,6 +183,14 @@ class NetworkSink:
                     self._socket.sendall(data)
                 else:
                     self._socket.sendto(data, (self._host, self._port))
-            except OSError:
-                logger.exception("Network send error to %s", self.name)
+            except OSError as exc:
+                logger.error(
+                    "Network sink %s failed — send error: %s. "
+                    "Output streaming has stopped. Remaining queued updates "
+                    "will be lost. Check that the remote endpoint is still "
+                    "reachable.",
+                    self.name, exc,
+                )
                 break
+
+        logger.info("Network sink %s sender thread exiting", self.name)

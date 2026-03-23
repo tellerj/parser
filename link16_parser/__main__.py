@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import threading
 
@@ -30,7 +31,7 @@ from link16_parser.encapsulation.detect import AutoDecoder
 from link16_parser.encapsulation.jreap_c import JreapCDecoder
 from link16_parser.encapsulation.simple import SimpleDecoder
 from link16_parser.encapsulation.siso_j import SisoJDecoder
-from link16_parser.ingestion.pcap_reader import PcapFileSource, PcapPipeSource
+from link16_parser.ingestion.reader import FileSource, PipeSource
 from link16_parser.link16.messages.j2_2 import J22AirPpliDecoder
 from link16_parser.link16.messages.j28_2 import J282FreeTextDecoder
 from link16_parser.link16.messages.j3_2 import J32AirTrackDecoder
@@ -46,7 +47,42 @@ logger = logging.getLogger("link16_parser")
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="link16-parser",
-        description="Parse Link 16 PCAP traffic and produce TACREPs.",
+        description="Parse Link 16 tactical data link traffic from PCAP captures and produce formatted reports (TACREPs, 9-LINEs).",
+        epilog="""\
+file examples (all options work with both .pcap and .pcapng files):
+  %(prog)s --file capture.pcap
+  %(prog)s --file capture.pcapng
+  %(prog)s --file capture.pcap --port 4444
+  %(prog)s --file capture.pcap --encap simple
+  %(prog)s --file capture.pcapng --encap siso-j
+  %(prog)s --file capture.pcap --encap jreap-c
+  %(prog)s --file capture.pcapng --originator "CTF124" --classification SECRET
+  %(prog)s --file capture.pcap --output-host 192.168.1.10 --output-port 9000
+  %(prog)s --file capture.pcapng --output-host 10.0.0.5 --output-port 5000 --output-proto udp
+  %(prog)s --file capture.pcap --port 4444 --encap simple --verbose
+
+pipe examples (live monitoring):
+  tcpdump -i eth0 -w - | %(prog)s --pipe
+  tcpdump -i eth0 -w - udp port 4444 | %(prog)s --pipe
+  tshark -i eth0 -w - | %(prog)s --pipe
+  tshark -i eth0 -w - -f "udp port 4444" | %(prog)s --pipe
+  dumpcap -i eth0 -w - | %(prog)s --pipe
+  socat UDP-RECV:4444 - | tcpdump -r - -w - | %(prog)s --pipe
+  ssh remote-host "tcpdump -i eth0 -w -" | %(prog)s --pipe
+  cat capture.pcap | %(prog)s --pipe
+
+note:
+  This tool does not capture packets from the network — it reads
+  captures produced by other tools (tcpdump, tshark, dumpcap, etc.).
+  For live monitoring, pipe from a capture tool as shown above.
+
+  Supported capture formats: libpcap (.pcap), pcapng (.pcapng).
+  Supported encapsulations: SIMPLE (STANAG 5602), DIS/SISO-J, JREAP-C.
+  Format and encapsulation are auto-detected by default.
+
+  Once running, an interactive shell provides commands for querying
+  tracks and generating reports. Type 'help' at the >> prompt.""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     source = p.add_mutually_exclusive_group(required=True)
     source.add_argument("--file", "-f", help="Path to a PCAP file")
@@ -144,25 +180,44 @@ def ingestion_loop(
                 track_db.update(msg)
                 msg_count += 1
 
+    except ValueError as exc:
+        # PCAP format errors — bad magic, wrong link-layer type, etc.
+        logger.error("Failed to read PCAP input: %s", exc)
+    except OSError as exc:
+        logger.error(
+            "I/O error reading PCAP source after %d packets: %s",
+            pkt_count, exc,
+        )
     except Exception:
-        logger.exception("Ingestion error")
+        logger.exception(
+            "Unexpected error during ingestion after %d packets, %d messages",
+            pkt_count, msg_count,
+        )
 
     logger.info("Ingestion complete: %d packets, %d messages", pkt_count, msg_count)
 
 
 def main() -> None:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
+    # --- Argument validation ---
+    if args.file and not os.path.isfile(args.file):
+        parser.error(f"file not found: {args.file}")
+
+    if (args.output_host is None) != (args.output_port is None):
+        parser.error("--output-host and --output-port must be specified together")
+
     # Build pipeline components
     if args.file:
-        source: PacketSource = PcapFileSource(args.file, port_filter=args.port)
+        source: PacketSource = FileSource(args.file, port_filter=args.port)
     else:
-        source = PcapPipeSource(port_filter=args.port)
+        source = PipeSource(port_filter=args.port)
 
     encap_decoder = build_encap_decoder(args.encap)
     jword_parser = build_jword_parser()
@@ -187,7 +242,15 @@ def main() -> None:
             protocol=args.output_proto,
             formatter=tacrep_fmt,
         )
-        network_sink.start()
+        try:
+            network_sink.start()
+        except OSError as exc:
+            logger.error(
+                "Cannot start network sink (%s:%d over %s): %s. "
+                "Check that the remote endpoint is reachable.",
+                args.output_host, args.output_port, args.output_proto, exc,
+            )
+            sys.exit(1)
         track_db.on_update(network_sink.on_track_update)
         logger.info("Network sink active: %s", network_sink.name)
 
@@ -201,8 +264,33 @@ def main() -> None:
     )
     ingestion_thread.start()
 
+    # In pipe mode, stdin is consumed by PipeSource — read shell input
+    # from the controlling terminal instead.
+    tty_stream = None
+    if args.pipe:
+        try:
+            tty_stream = open("/dev/tty", "r")
+        except OSError:
+            # No controlling terminal (cron, Docker, CI, etc.).
+            # Run headless: ingestion only, wait for completion or Ctrl-C.
+            logger.info("No controlling terminal — running in headless mode")
+            try:
+                ingestion_thread.join()
+            except KeyboardInterrupt:
+                pass
+            finally:
+                stop_event.set()
+                ingestion_thread.join(timeout=2.0)
+                if network_sink is not None:
+                    network_sink.stop()
+            return
+
     # Run interactive shell in foreground
-    shell = InteractiveShell(track_db=track_db, formatters=formatters)
+    shell = InteractiveShell(
+        track_db=track_db,
+        formatters=formatters,
+        input_stream=tty_stream,
+    )
     try:
         shell.run()
     finally:
@@ -210,6 +298,8 @@ def main() -> None:
         ingestion_thread.join(timeout=2.0)
         if network_sink is not None:
             network_sink.stop()
+        if tty_stream is not None:
+            tty_stream.close()
 
 
 if __name__ == "__main__":

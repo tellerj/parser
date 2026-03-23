@@ -1,139 +1,48 @@
-"""PCAP packet sources: file-based and live pipe.
+"""libpcap format stream reader.
 
-Reads PCAP data (libpcap format, both endiannesses), strips Ethernet/IP/
-UDP|TCP headers, and yields ``(timestamp, payload)`` tuples for downstream
-encapsulation decoding. Both classes satisfy the ``PacketSource`` protocol.
+Parses the libpcap (.pcap) capture format and yields
+``(timestamp, payload)`` tuples. Handles both endiannesses and both
+microsecond and nanosecond timestamp resolution.
 
-Supports optional port filtering via ``--port`` to skip irrelevant traffic
-early in the pipeline (before encapsulation decoding). When no port filter
-is set, all UDP/TCP packets are yielded regardless of port number.
+This module is called by the auto-detection logic in ``reader.py`` —
+it is not used directly by the rest of the pipeline.
 
-Supported frame types:
-    - Ethernet II (ethertype 0x0800 = IPv4) only. 802.1Q VLAN tags, IPv6,
-      and non-Ethernet link layers are silently skipped.
-    - IP protocols: UDP (17), TCP (6). Other protocols are silently skipped.
-
-Not supported:
-    - pcapng format (would need a separate reader).
-    - Fragmented IP packets (assumes each frame is a complete datagram).
+Format reference: https://wiki.wireshark.org/Development/LibpcapFileFormat
 """
 
 from __future__ import annotations
 
 import struct
-import sys
 from typing import BinaryIO, Iterator
 
-
-# Ethernet + IP + UDP/TCP header constants
-ETHERNET_HEADER_LEN = 14
-IP_HEADER_MIN_LEN = 20
-UDP_HEADER_LEN = 8
-TCP_HEADER_MIN_LEN = 20
-
-
-def _parse_frame(frame: bytes) -> tuple[bytes, int, int] | None:
-    """Parse an Ethernet/IP/UDP|TCP frame.
-
-    Args:
-        frame: A complete captured Ethernet frame (including Ethernet header).
-
-    Returns:
-        A tuple of ``(payload, src_port, dst_port)`` where *payload* is the
-        transport-layer payload bytes, or ``None`` if the frame is not
-        Ethernet II / IPv4 / UDP|TCP.
-    """
-    if len(frame) < ETHERNET_HEADER_LEN + IP_HEADER_MIN_LEN:
-        return None
-
-    # Ethernet: ethertype at offset 12-13
-    ethertype = struct.unpack_from("!H", frame, 12)[0]
-    if ethertype != 0x0800:  # Not IPv4
-        return None
-
-    ip_offset = ETHERNET_HEADER_LEN
-    ip_version_ihl = frame[ip_offset]
-    ip_header_len = (ip_version_ihl & 0x0F) * 4
-    if ip_header_len < IP_HEADER_MIN_LEN:
-        return None
-
-    protocol = frame[ip_offset + 9]
-    transport_offset = ip_offset + ip_header_len
-
-    if protocol == 17:  # UDP
-        if len(frame) < transport_offset + UDP_HEADER_LEN:
-            return None
-        src_port, dst_port = struct.unpack_from("!HH", frame, transport_offset)
-        payload = frame[transport_offset + UDP_HEADER_LEN:]
-        return payload, src_port, dst_port
-
-    elif protocol == 6:  # TCP
-        if len(frame) < transport_offset + TCP_HEADER_MIN_LEN:
-            return None
-        src_port, dst_port = struct.unpack_from("!HH", frame, transport_offset)
-        tcp_data_offset = (frame[transport_offset + 12] >> 4) * 4
-        payload = frame[transport_offset + tcp_data_offset:]
-        return payload, src_port, dst_port
-
-    return None
+from link16_parser.ingestion.reader import (
+    LINKTYPE_ETHERNET,
+    parse_frame,
+    read_exact,
+)
 
 
-class PcapFileSource:
-    """Reads packets from a libpcap file on disk.
-
-    Satisfies the ``PacketSource`` protocol.
-
-    Args:
-        path: Filesystem path to a ``.pcap`` file.
-        port_filter: If set, only yield packets where either the source
-            or destination port matches this value. ``None`` means no
-            filtering (yield all UDP/TCP packets).
-    """
-
-    def __init__(self, path: str, port_filter: int | None = None) -> None:
-        self._path = path
-        self._port_filter = port_filter
-
-    def packets(self) -> Iterator[tuple[float, bytes]]:
-        """Yield ``(timestamp, payload)`` for every matching IP packet."""
-        with open(self._path, "rb") as f:
-            yield from _read_pcap_stream(f, self._port_filter)
-
-
-class PcapPipeSource:
-    """Reads packets from a live PCAP stream piped to stdin.
-
-    Satisfies the ``PacketSource`` protocol. Use this when PCAP data is
-    piped from ``tcpdump -w -`` or a redirection tunnel.
-
-    Args:
-        port_filter: If set, only yield packets where either the source
-            or destination port matches this value. ``None`` means no
-            filtering (yield all UDP/TCP packets).
-    """
-
-    def __init__(self, port_filter: int | None = None) -> None:
-        self._port_filter = port_filter
-
-    def packets(self) -> Iterator[tuple[float, bytes]]:
-        """Yield ``(timestamp, payload)`` as packets arrive on stdin."""
-        yield from _read_pcap_stream(sys.stdin.buffer, self._port_filter)
-
-
-def _read_pcap_stream(
+def read_pcap_stream(
     stream: BinaryIO,
     port_filter: int | None = None,
+    header_prefix: bytes = b"",
 ) -> Iterator[tuple[float, bytes]]:
     """Parse a libpcap byte stream and yield ``(timestamp, payload)`` tuples.
 
-    Handles both little-endian (magic ``0xA1B2C3D4``) and big-endian
-    (magic ``0xD4C3B2A1``) libpcap files. Reads until EOF or broken pipe.
+    Handles both little-endian and big-endian libpcap files, with both
+    microsecond and nanosecond timestamp resolution. Reads until EOF or
+    broken pipe.
 
     Args:
-        stream: A readable binary stream positioned at the start of the
-            libpcap global header (byte 0 of the file/pipe).
+        stream: A readable binary stream. If ``header_prefix`` is empty,
+            the stream must be positioned at byte 0 of the global header.
+            Otherwise, the prefix contains the already-consumed leading
+            bytes (from auto-detection).
         port_filter: If set, only yield packets where either the source
             or destination port matches. ``None`` means yield all.
+        header_prefix: Bytes already read from the stream by the
+            auto-detect logic (typically the first 4 bytes containing
+            the magic number).
 
     Yields:
         ``(pcap_timestamp, transport_payload)`` tuples for each valid
@@ -141,39 +50,73 @@ def _read_pcap_stream(
         Non-matching packets are skipped.
 
     Raises:
-        ValueError: If the stream does not start with a valid libpcap
-            magic number.
+        ValueError: If the global header is truncated, contains an
+            unrecognized magic number, or specifies a non-Ethernet
+            link-layer type.
     """
-    # Read global header (24 bytes)
-    global_header = _read_exact(stream, 24)
-    if global_header is None:
-        return
+    # Read the rest of the 24-byte global header
+    remaining = 24 - len(header_prefix)
+    if remaining > 0:
+        rest = read_exact(stream, remaining)
+        if rest is None:
+            raise ValueError(
+                "Truncated PCAP input — the file/stream ended before the "
+                "24-byte global header could be read. Check that the file "
+                "is not empty or corrupted."
+            )
+        global_header = header_prefix + rest
+    else:
+        global_header = header_prefix[:24]
 
     magic = struct.unpack_from("<I", global_header, 0)[0]
+
+    # Microsecond-resolution magic
     if magic == 0xA1B2C3D4:
-        endian = "<"
+        endian, ts_divisor = "<", 1_000_000
     elif magic == 0xD4C3B2A1:
-        endian = ">"
+        endian, ts_divisor = ">", 1_000_000
+    # Nanosecond-resolution magic
+    elif magic == 0xA1B23C4D:
+        endian, ts_divisor = "<", 1_000_000_000
+    elif magic == 0x4D3CB2A1:
+        endian, ts_divisor = ">", 1_000_000_000
     else:
-        raise ValueError(f"Not a libpcap file (magic: 0x{magic:08X})")
+        raise ValueError(
+            f"Not a recognized PCAP file (magic bytes: 0x{magic:08X}). "
+            f"This reader supports libpcap format (.pcap) only — pcapng "
+            f"(.pcapng) and other capture formats are not supported. "
+            f"If using Wireshark, export as 'Wireshark/tcpdump/... - pcap'."
+        )
+
+    # Validate link-layer type (offset 20 in global header)
+    link_type = struct.unpack_from(f"{endian}I", global_header, 20)[0]
+    if link_type != LINKTYPE_ETHERNET:
+        # Common types: 1=Ethernet, 101=Raw IP, 113=Linux cooked, 228=Raw IPv4
+        raise ValueError(
+            f"Unsupported PCAP link-layer type {link_type}. This reader only "
+            f"supports Ethernet captures (type 1). The capture may have been "
+            f"taken on a non-Ethernet interface (e.g. loopback, USB, or a "
+            f"tunnel). Re-capture on an Ethernet interface, or use tcpdump "
+            f"with '-y EN10MB' to force Ethernet framing."
+        )
 
     # Read packet records
     while True:
-        # Packet header: 16 bytes (ts_sec, ts_usec, incl_len, orig_len)
-        pkt_header = _read_exact(stream, 16)
+        # Packet header: 16 bytes (ts_sec, ts_frac, incl_len, orig_len)
+        pkt_header = read_exact(stream, 16)
         if pkt_header is None:
             return  # End of stream
 
-        ts_sec, ts_usec, incl_len, _orig_len = struct.unpack(
+        ts_sec, ts_frac, incl_len, _orig_len = struct.unpack(
             f"{endian}IIII", pkt_header
         )
-        timestamp = ts_sec + ts_usec / 1_000_000
+        timestamp = ts_sec + ts_frac / ts_divisor
 
-        frame = _read_exact(stream, incl_len)
+        frame = read_exact(stream, incl_len)
         if frame is None:
             return
 
-        parsed = _parse_frame(frame)
+        parsed = parse_frame(frame)
         if parsed is None:
             continue
 
@@ -187,23 +130,3 @@ def _read_pcap_stream(
                 continue
 
         yield (timestamp, payload)
-
-
-def _read_exact(stream: BinaryIO, n: int) -> bytes | None:
-    """Read exactly *n* bytes from a binary stream.
-
-    Args:
-        stream: A readable binary stream.
-        n: Number of bytes to read.
-
-    Returns:
-        Exactly *n* bytes, or ``None`` if the stream reaches EOF before
-        *n* bytes are available.
-    """
-    data = b""
-    while len(data) < n:
-        chunk = stream.read(n - len(data))
-        if not chunk:
-            return None
-        data += chunk
-    return data

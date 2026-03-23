@@ -40,8 +40,8 @@ class PacketSource(Protocol):
     this interface is source-agnostic.
 
     Implementations:
-        ``PcapFileSource`` — reads a ``.pcap`` file from disk.
-        ``PcapPipeSource`` — reads a live PCAP stream from stdin.
+        ``FileSource`` — reads a capture file from disk (auto-detects format).
+        ``PipeSource`` — reads a live capture stream from stdin.
     """
 
     def packets(self) -> Iterator[tuple[float, bytes]]:

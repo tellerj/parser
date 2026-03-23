@@ -74,9 +74,6 @@ class SisoJDecoder:
         if tdl_type != TDL_TYPE_LINK16:
             return []
 
-        # Data length in bits at offset 12 + 14
-        data_len_bits = struct.unpack_from("!H", payload, DIS_HEADER_LEN + 14)[0]
-
         # Link 16 Simulation Network Header starts after Signal PDU fields
         sim_header_offset = DIS_HEADER_LEN + SIGNAL_PDU_FIELDS_LEN
         npg = struct.unpack_from("!H", payload, sim_header_offset)[0]
