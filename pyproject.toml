@@ -17,3 +17,6 @@ link16-parser = "link16_parser.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["link16_parser*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
