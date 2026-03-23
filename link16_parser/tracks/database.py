@@ -13,14 +13,13 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Callable, Iterator
+from dataclasses import replace
+from typing import Iterator
 
+from link16_parser.core.interfaces import TrackListener
 from link16_parser.core.types import Link16Message, Track
 
 logger = logging.getLogger(__name__)
-
-# Type alias for update listener callbacks
-TrackListener = Callable[[Track, Link16Message], None]
 
 
 class TrackDatabase:
@@ -51,7 +50,8 @@ class TrackDatabase:
         Args:
             listener: A callable ``(Track, Link16Message) -> None``.
         """
-        self._listeners.append(listener)
+        with self._lock:
+            self._listeners.append(listener)
 
     def update(self, message: Link16Message) -> Track:
         """Update (or create) a track from a decoded Link 16 message.
@@ -90,10 +90,8 @@ class TrackDatabase:
             if message.speed_kph is not None:
                 track.speed_kph = message.speed_kph
 
-            # Track number from message fields if provided
-            tn = message.fields.get("track_number")
-            if isinstance(tn, str):
-                track.track_number = tn
+            if message.track_number is not None:
+                track.track_number = message.track_number
 
             track.last_updated = message.timestamp
             track.message_count += 1
@@ -110,7 +108,7 @@ class TrackDatabase:
                         listener_name, track.stn, message.msg_type,
                     )
 
-            return track
+            return replace(track)
 
     def get_by_stn(self, stn: int) -> Track | None:
         """Look up a track by Source Track Number.
@@ -119,10 +117,11 @@ class TrackDatabase:
             stn: The integer STN to search for (exact match).
 
         Returns:
-            The matching ``Track``, or ``None`` if not found.
+            A snapshot of the matching ``Track``, or ``None`` if not found.
         """
         with self._lock:
-            return self._tracks.get(stn)
+            track = self._tracks.get(stn)
+            return replace(track) if track is not None else None
 
     def get_by_callsign(self, callsign: str) -> Track | None:
         """Look up a track by callsign (case-insensitive).
@@ -131,14 +130,15 @@ class TrackDatabase:
             callsign: The callsign string to match (e.g. ``"RULDOG01"``).
 
         Returns:
-            The first matching ``Track``, or ``None``. If multiple tracks
-            share a callsign (shouldn't happen), returns the first found.
+            A snapshot of the first matching ``Track``, or ``None``. If
+            multiple tracks share a callsign (shouldn't happen), returns
+            the first found.
         """
         callsign_upper = callsign.upper()
         with self._lock:
             for track in self._tracks.values():
                 if track.callsign and track.callsign.upper() == callsign_upper:
-                    return track
+                    return replace(track)
         return None
 
     def get_by_track_number(self, track_number: str) -> Track | None:
@@ -148,12 +148,12 @@ class TrackDatabase:
             track_number: The track number string (exact match).
 
         Returns:
-            The matching ``Track``, or ``None``.
+            A snapshot of the matching ``Track``, or ``None``.
         """
         with self._lock:
             for track in self._tracks.values():
                 if track.track_number == track_number:
-                    return track
+                    return replace(track)
         return None
 
     def find(self, query: str) -> Track | None:
@@ -164,33 +164,42 @@ class TrackDatabase:
             2. Try as track number (exact string match).
             3. Try as callsign (case-insensitive).
 
+        All strategies are tried under a single lock acquisition for
+        atomicity and efficiency.
+
         Args:
             query: A user-supplied identifier string.
 
         Returns:
-            The first matching ``Track``, or ``None``.
+            A snapshot of the first matching ``Track``, or ``None``.
         """
-        # Try as STN (integer)
-        try:
-            stn = int(query, 8) if len(query) == 5 else int(query)
-            result = self.get_by_stn(stn)
-            if result is not None:
-                return result
-        except ValueError:
-            pass
+        with self._lock:
+            # Try as STN (integer)
+            try:
+                stn = int(query, 8) if len(query) == 5 else int(query)
+                track = self._tracks.get(stn)
+                if track is not None:
+                    return replace(track)
+            except ValueError:
+                pass
 
-        # Try as track number
-        result = self.get_by_track_number(query)
-        if result is not None:
-            return result
+            # Try as track number
+            for track in self._tracks.values():
+                if track.track_number == query:
+                    return replace(track)
 
-        # Try as callsign
-        return self.get_by_callsign(query)
+            # Try as callsign
+            callsign_upper = query.upper()
+            for track in self._tracks.values():
+                if track.callsign and track.callsign.upper() == callsign_upper:
+                    return replace(track)
+
+        return None
 
     def all_tracks(self) -> list[Track]:
         """Return a snapshot of all current tracks, sorted by last update."""
         with self._lock:
-            tracks = list(self._tracks.values())
+            tracks = [replace(t) for t in self._tracks.values()]
         tracks.sort(key=lambda t: t.last_updated or t.stn, reverse=True)
         return tracks
 

@@ -7,6 +7,7 @@ blocking the ingestion pipeline.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import queue
 import socket
@@ -54,7 +55,7 @@ class NetworkSink:
         self._port = port
         self._protocol = protocol.lower()
         self._formatter = formatter
-        self._queue: queue.Queue[str | None] = queue.Queue(maxsize=queue_size)
+        self._queue: queue.Queue[tuple[Track, Link16Message] | None] = queue.Queue(maxsize=queue_size)
         self._socket: socket.socket | None = None
         self._sender_thread: threading.Thread | None = None
         self._running = False
@@ -135,10 +136,11 @@ class NetworkSink:
             )
 
     def on_track_update(self, track: Track, message: Link16Message) -> None:
-        """Enqueue a formatted track update for network delivery.
+        """Enqueue a track snapshot for network delivery.
 
-        Called inside the ``TrackDatabase`` lock. Enqueues without
-        blocking — if the queue is full, the update is dropped with
+        Called inside the ``TrackDatabase`` lock. Snapshots the track
+        and enqueues without blocking — formatting is deferred to the
+        sender thread. If the queue is full, the update is dropped with
         a throttled warning.
 
         Args:
@@ -148,9 +150,9 @@ class NetworkSink:
         if self._formatter is None:
             return
 
-        formatted = self._formatter.format(track)
+        snapshot = dataclasses.replace(track)
         try:
-            self._queue.put_nowait(formatted)
+            self._queue.put_nowait((snapshot, message))
         except queue.Full:
             self._drop_count += 1
             now = time.monotonic()
@@ -163,22 +165,24 @@ class NetworkSink:
                 self._last_drop_log = now
 
     def _sender_loop(self) -> None:
-        """Background thread: drain the queue and send over the socket."""
+        """Background thread: drain the queue, format, and send over the socket."""
         while self._running or not self._queue.empty():
             try:
-                msg = self._queue.get(timeout=0.5)
+                item = self._queue.get(timeout=0.5)
             except queue.Empty:
                 continue
 
             # None is the poison pill — exit
-            if msg is None:
+            if item is None:
                 break
 
-            if self._socket is None:
+            if self._socket is None or self._formatter is None:
                 continue
 
+            track, _message = item
             try:
-                data = (msg + "\n").encode("utf-8")
+                formatted = self._formatter.format(track)
+                data = (formatted + "\n").encode("utf-8")
                 if self._protocol == "tcp":
                     self._socket.sendall(data)
                 else:

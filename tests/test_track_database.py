@@ -89,7 +89,7 @@ class TestFind:
 
     def test_find_by_track_number(self, track_db: TrackDatabase) -> None:
         msg = _msg(stn=100)
-        msg.fields["track_number"] = "A1234"
+        msg.track_number = "A1234"
         track_db.update(msg)
 
         assert track_db.find("A1234") is not None

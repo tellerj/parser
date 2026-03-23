@@ -168,6 +168,7 @@ class Link16Message:
     callsign: str | None = None
     heading_deg: float | None = None
     speed_kph: float | None = None
+    track_number: str | None = None
     fields: dict[str, object] = field(default_factory=lambda: dict[str, object]())
 
 
