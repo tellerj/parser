@@ -7,6 +7,8 @@ from link16_parser.core.types import (
     TrackStatus,
     Position,
     PlatformId,
+    WordFormat,
+    Identity,
 )
 from link16_parser.core.interfaces import (
     EncapsulationDecoder,
@@ -23,6 +25,8 @@ __all__ = [
     "TrackStatus",
     "Position",
     "PlatformId",
+    "WordFormat",
+    "Identity",
     "EncapsulationDecoder",
     "MessageDecoder",
     "OutputFormatter",

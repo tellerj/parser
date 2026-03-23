@@ -111,8 +111,10 @@ flowchart LR
 
 Arrows point toward the dependency ("A → B" means A imports from B).
 Every package also imports from `core/` — those arrows are omitted to
-reduce clutter. `__main__.py` imports from every package to wire the
-pipeline together; it is the only module that knows about all components.
+reduce clutter. `__main__.py` imports only from each package's
+`__init__.py` facade — it never reaches into internal modules. Each
+`__init__.py` owns the registry of its implementations and exposes a
+factory function (e.g. `build_decoder()`, `build_parser()`).
 
 ```mermaid
 graph TB
@@ -250,13 +252,16 @@ new implementations without modifying existing code (beyond wiring).
 | Extension Point | Protocol | Where to add | How to register |
 |----------------|----------|--------------|-----------------|
 | **Capture format** | — | `ingestion/` | New `*_reader.py` + magic bytes in `reader._auto_detect_stream()` |
-| **Encapsulation format** | `EncapsulationDecoder` | `encapsulation/` | `detect.py` + `__main__.py` |
-| **Message type decoder** | `MessageDecoder` | `link16/messages/` | `__main__.py` → `parser.register()` |
-| **Output format** | `OutputFormatter` | `output/` | `__main__.py` → `formatters` dict |
-| **Output sink** | `OutputSink` | `network/` | `__main__.py` → `track_db.on_update()` |
+| **Encapsulation format** | `EncapsulationDecoder` | `encapsulation/` | New module + `_DECODER_REGISTRY` in `encapsulation/__init__.py` |
+| **Message type decoder** | `MessageDecoder` | `link16/messages/` | New module + `build_parser()` in `link16/__init__.py` |
+| **Output format** | `OutputFormatter` | `output/` | New module + `build_formatters()` in `output/__init__.py` |
+| **Output sink** | `OutputSink` | `network/` | New module + wiring in `__main__.py` |
 
-Each pluggable package has a detailed "How to extend" guide in its
-`__init__.py` file.
+Each component's `__init__.py` is the single entry point for that
+package — it owns the registry of implementations and exposes a factory
+function. `__main__.py` imports only from these facades, never from
+internal modules. Each pluggable package has a detailed "How to extend"
+guide in its `__init__.py` file.
 
 ---
 

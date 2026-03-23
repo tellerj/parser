@@ -8,8 +8,9 @@ import tempfile
 
 import pytest
 
+from link16_parser.ingestion import FileSource
 from link16_parser.ingestion.pcap_reader import read_pcap_stream
-from link16_parser.ingestion.reader import FileSource, parse_frame
+from link16_parser.ingestion.reader import parse_frame
 
 from tests.builders import make_jword, make_pcap_file, make_simple_payload, make_udp_frame
 

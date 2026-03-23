@@ -26,7 +26,8 @@ How to add a new output format
 
    No base class or inheritance needed — just match the method signatures.
 
-3. Register it in ``__main__.py`` by adding it to the ``formatters`` dict::
+3. Register it in this file (``output/__init__.py``) inside
+   ``build_formatters()``::
 
        from link16_parser.output.bullseye import BullseyeFormatter
        formatters["BULLSEYE"] = BullseyeFormatter()
@@ -54,3 +55,40 @@ Existing implementations
 - ``nineline.py`` — 9-line convenience format (informal).
 - ``coords.py``   — Coordinate conversion utilities (not a formatter).
 """
+
+from __future__ import annotations
+
+from link16_parser.core.interfaces import OutputFormatter
+from link16_parser.output.nineline import NineLineFormatter
+from link16_parser.output.tacrep import TacrepFormatter
+
+
+def build_formatters(
+    originator: str = "L16-PARSER",
+    classification: str = "UNCLAS",
+) -> dict[str, OutputFormatter]:
+    """Create the standard set of output formatters.
+
+    Args:
+        originator: The TACREP originator field (e.g. ``"CTF124"``).
+        classification: Classification marking (e.g. ``"SECRET"``).
+
+    Returns:
+        A dict mapping format name to ``OutputFormatter`` instance.
+        Keys match the names used by the CLI ``format`` command.
+    """
+    formatters: dict[str, OutputFormatter] = {
+        "TACREP": TacrepFormatter(
+            originator=originator,
+            classification=classification,
+        ),
+        "9-LINE": NineLineFormatter(),
+    }
+    return formatters
+
+
+__all__ = [
+    "build_formatters",
+    "TacrepFormatter",
+    "NineLineFormatter",
+]

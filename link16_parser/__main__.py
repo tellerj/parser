@@ -25,26 +25,19 @@ import os
 import sys
 import threading
 
-from link16_parser.cli.shell import InteractiveShell
-from link16_parser.core.interfaces import EncapsulationDecoder, PacketSource
-from link16_parser.encapsulation.detect import AutoDecoder
-from link16_parser.encapsulation.jreap_c import JreapCDecoder
-from link16_parser.encapsulation.simple import SimpleDecoder
-from link16_parser.encapsulation.siso_j import SisoJDecoder
-from link16_parser.ingestion.reader import FileSource, PipeSource
-from link16_parser.link16.messages.j2_2 import J22AirPpliDecoder
-from link16_parser.link16.messages.j28_2 import J282FreeTextDecoder
-from link16_parser.link16.messages.j3_2 import J32AirTrackDecoder
-from link16_parser.link16.parser import JWordParser
-from link16_parser.network.sink import NetworkSink
-from link16_parser.output.nineline import NineLineFormatter
-from link16_parser.output.tacrep import TacrepFormatter
-from link16_parser.tracks.database import TrackDatabase
+from link16_parser.cli import InteractiveShell
+from link16_parser.core import EncapsulationDecoder, PacketSource
+from link16_parser.encapsulation import ENCAP_CHOICES, build_decoder
+from link16_parser.ingestion import build_source
+from link16_parser.link16 import JWordParser, build_parser
+from link16_parser.network import NetworkSink
+from link16_parser.output import build_formatters
+from link16_parser.tracks import TrackDatabase
 
 logger = logging.getLogger("link16_parser")
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="link16-parser",
         description="Parse Link 16 tactical data link traffic from PCAP captures and produce formatted reports (TACREPs, 9-LINEs).",
@@ -90,7 +83,7 @@ note:
 
     p.add_argument(
         "--encap", "-e",
-        choices=["auto", "simple", "siso-j", "jreap-c"],
+        choices=ENCAP_CHOICES,
         default="auto",
         help="Encapsulation format (default: auto-detect)",
     )
@@ -115,32 +108,6 @@ note:
     p.add_argument("--classification", default="UNCLAS", help="Classification marking")
     p.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     return p
-
-
-def build_encap_decoder(name: str) -> EncapsulationDecoder:
-    """Instantiate the encapsulation decoder for the given format name.
-
-    Args:
-        name: One of ``"auto"``, ``"simple"``, ``"siso-j"``, ``"jreap-c"``.
-
-    Returns:
-        An ``EncapsulationDecoder`` instance.
-    """
-    return {
-        "auto": AutoDecoder,
-        "simple": SimpleDecoder,
-        "siso-j": SisoJDecoder,
-        "jreap-c": JreapCDecoder,
-    }[name]()
-
-
-def build_jword_parser() -> JWordParser:
-    """Create a JWordParser with all available message decoders registered."""
-    parser = JWordParser()
-    parser.register(J22AirPpliDecoder())
-    parser.register(J32AirTrackDecoder())
-    parser.register(J282FreeTextDecoder())
-    return parser
 
 
 def ingestion_loop(
@@ -198,7 +165,7 @@ def ingestion_loop(
 
 
 def main() -> None:
-    parser = build_parser()
+    parser = build_arg_parser()
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -214,28 +181,22 @@ def main() -> None:
         parser.error("--output-host and --output-port must be specified together")
 
     # Build pipeline components
-    if args.file:
-        source: PacketSource = FileSource(args.file, port_filter=args.port)
-    else:
-        source = PipeSource(port_filter=args.port)
-
-    encap_decoder = build_encap_decoder(args.encap)
-    jword_parser = build_jword_parser()
+    source = build_source(file=args.file, pipe=args.pipe, port_filter=args.port)
+    encap_decoder = build_decoder(args.encap)
+    jword_parser = build_parser()
     track_db = TrackDatabase()
 
     # Output formatters
-    tacrep_fmt = TacrepFormatter(
+    formatters = build_formatters(
         originator=args.originator,
         classification=args.classification,
     )
-    formatters = {
-        "TACREP": tacrep_fmt,
-        "9-LINE": NineLineFormatter(),
-    }
 
     # Network output sink (optional)
     network_sink: NetworkSink | None = None
     if args.output_host and args.output_port:
+        # NetworkSink needs a specific formatter, not the dict
+        tacrep_fmt = formatters.get("TACREP")
         network_sink = NetworkSink(
             host=args.output_host,
             port=args.output_port,

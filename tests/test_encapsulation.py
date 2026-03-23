@@ -6,10 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from link16_parser.encapsulation.detect import AutoDecoder
-from link16_parser.encapsulation.jreap_c import JreapCDecoder
-from link16_parser.encapsulation.simple import SimpleDecoder
-from link16_parser.encapsulation.siso_j import SisoJDecoder
+from link16_parser.encapsulation import AutoDecoder, JreapCDecoder, SimpleDecoder, SisoJDecoder
 
 from tests.builders import make_jword, make_simple_payload, make_siso_j_payload
 
@@ -94,6 +91,50 @@ class TestAutoDecoder:
 
     def test_empty_payload_returns_empty(self) -> None:
         words = AutoDecoder().decode(b"", PCAP_TS)
+        assert words == []
+
+    def test_fallback_finds_decoder_without_heuristic(self) -> None:
+        """Decoders without a fast-path heuristic are found by the fallback loop.
+
+        This exercises the try-each-decoder fallback in AutoDecoder.decode()
+        which exists for formats like JREAP-C that have no distinctive magic
+        bytes registered in the heuristic fast-path. A fake decoder is
+        injected alongside the real ones to prove the path works.
+        """
+        from link16_parser.core.types import RawJWord
+        from datetime import datetime, timezone
+
+        MAGIC = b"\xFE\xED"  # not SIMPLE sync, not DIS PDU type at byte 2
+
+        class FakeDecoder:
+            @property
+            def name(self) -> str:
+                return "FAKE"
+
+            def decode(self, payload: bytes, pcap_timestamp: float) -> list[RawJWord]:
+                if payload[:2] == MAGIC:
+                    return [RawJWord(
+                        data=b"\x00" * 10,
+                        stn=999,
+                        npg=0,
+                        timestamp=datetime.fromtimestamp(pcap_timestamp, tz=timezone.utc),
+                    )]
+                return []
+
+        auto = AutoDecoder(decoders=[SimpleDecoder(), SisoJDecoder(), FakeDecoder()])
+        payload = MAGIC + b"\x00" * 20
+
+        words = auto.decode(payload, PCAP_TS)
+
+        assert len(words) == 1
+        assert words[0].stn == 999
+
+    def test_fallback_returns_empty_when_nothing_matches(self) -> None:
+        """Payloads that no decoder recognizes produce an empty list."""
+        # Bytes that don't match SIMPLE sync or DIS PDU type heuristics,
+        # and won't be accepted by any real decoder's validation.
+        garbage = b"\xDE\xAD\xBE\xEF" + b"\x00" * 50
+        words = AutoDecoder().decode(garbage, PCAP_TS)
         assert words == []
 
 

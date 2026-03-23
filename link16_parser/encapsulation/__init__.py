@@ -26,14 +26,12 @@ How to add a new encapsulation format
 
    No base class or inheritance needed — just match the method signatures.
 
-3. Register it in two places:
+3. Register it in this file (``encapsulation/__init__.py``):
 
-   a. ``detect.py`` — add a heuristic check in ``AutoDecoder.decode()``
-      (e.g. check for magic bytes) and add your decoder to the fallback
-      list in ``__init__``.
-
-   b. ``__main__.py`` — add your format to the ``build_encap_decoder()``
-      lookup dict and to the ``--encap`` CLI choices.
+   a. Import your class.
+   b. Add an entry to ``_DECODER_REGISTRY``.
+   c. If your format has a heuristic signature (magic bytes, PDU type),
+      add a fast-path check in ``detect.py:AutoDecoder.decode()``.
 
 4. Write a test in ``tests/`` that feeds known bytes through your decoder
    and asserts the correct ``RawJWord`` output.
@@ -46,3 +44,53 @@ Existing implementations
 - ``jreap_c.py`` — MIL-STD-3011 / JREAP-C (stub — awaiting spec access).
 - ``detect.py``  — ``AutoDecoder`` heuristic dispatcher.
 """
+
+from __future__ import annotations
+
+from link16_parser.core.interfaces import EncapsulationDecoder
+from link16_parser.encapsulation.detect import AutoDecoder
+from link16_parser.encapsulation.jreap_c import JreapCDecoder
+from link16_parser.encapsulation.simple import SimpleDecoder
+from link16_parser.encapsulation.siso_j import SisoJDecoder
+
+# ---------------------------------------------------------------------------
+# Decoder registry — maps CLI-friendly name to decoder class.
+# To add a new format: import it above and add an entry here.
+# ---------------------------------------------------------------------------
+
+_DECODER_REGISTRY: dict[str, type[EncapsulationDecoder]] = {
+    "simple": SimpleDecoder,
+    "siso-j": SisoJDecoder,
+    "jreap-c": JreapCDecoder,
+}
+
+ENCAP_CHOICES: list[str] = ["auto", *_DECODER_REGISTRY]
+
+
+def build_decoder(name: str) -> EncapsulationDecoder:
+    """Instantiate the encapsulation decoder for the given format name.
+
+    Args:
+        name: One of ``ENCAP_CHOICES`` — ``"auto"``, ``"simple"``,
+              ``"siso-j"``, ``"jreap-c"``.
+
+    Returns:
+        An ``EncapsulationDecoder`` instance.
+
+    Raises:
+        KeyError: If *name* is not in ``ENCAP_CHOICES``.
+    """
+    if name == "auto":
+        concrete = [cls() for cls in _DECODER_REGISTRY.values()]
+        return AutoDecoder(decoders=concrete)
+    return _DECODER_REGISTRY[name]()
+
+
+__all__ = [
+    "build_decoder",
+    "ENCAP_CHOICES",
+    "AutoDecoder",
+    "SimpleDecoder",
+    "SisoJDecoder",
+    "JreapCDecoder",
+]

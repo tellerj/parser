@@ -41,8 +41,8 @@ new class that satisfies the ``PacketSource`` protocol::
             ...
 
 No base class or inheritance needed — just match the method signature.
-Register it in ``__main__.py`` alongside the existing source-selection
-logic.
+Register it in this file (``ingestion/__init__.py``) inside
+``build_source()``.
 
 Existing implementations
 ========================
@@ -55,3 +55,41 @@ Existing implementations
 - ``pcapng_reader.py`` — pcapng format stream reader (stub, awaiting
   implementation).
 """
+
+from __future__ import annotations
+
+from link16_parser.core.interfaces import PacketSource
+from link16_parser.ingestion.reader import FileSource, PipeSource
+
+
+def build_source(
+    file: str | None = None,
+    pipe: bool = False,
+    port_filter: int | None = None,
+) -> PacketSource:
+    """Instantiate the appropriate packet source.
+
+    Args:
+        file: Path to a capture file on disk. Mutually exclusive with *pipe*.
+        pipe: If ``True``, read a live capture stream from stdin.
+        port_filter: If set, only yield packets where either the source
+            or destination port matches this value.
+
+    Returns:
+        A ``PacketSource`` instance (``FileSource`` or ``PipeSource``).
+
+    Raises:
+        ValueError: If neither *file* nor *pipe* is specified.
+    """
+    if file:
+        return FileSource(file, port_filter=port_filter)
+    if pipe:
+        return PipeSource(port_filter=port_filter)
+    raise ValueError("Either 'file' or 'pipe' must be specified")
+
+
+__all__ = [
+    "build_source",
+    "FileSource",
+    "PipeSource",
+]

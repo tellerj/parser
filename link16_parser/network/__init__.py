@@ -38,7 +38,7 @@ How to add a new network sink
 
 3. Register it in ``__main__.py``::
 
-       from link16_parser.network.multicast import MulticastSink
+       from link16_parser.network import MulticastSink
        sink = MulticastSink(...)
        sink.start()
        track_db.on_update(sink.on_track_update)
@@ -61,3 +61,7 @@ Existing implementations
 
 - ``sink.py`` — ``NetworkSink``: streams formatted reports over TCP or UDP.
 """
+
+from link16_parser.network.sink import NetworkSink
+
+__all__ = ["NetworkSink"]

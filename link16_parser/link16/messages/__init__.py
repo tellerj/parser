@@ -43,7 +43,7 @@ How to add a new message decoder
 
    No base class or inheritance needed — just match the method signatures.
 
-3. Register it in ``__main__.py`` inside ``build_jword_parser()``::
+3. Register it in ``link16/__init__.py`` inside ``build_parser()``::
 
        from link16_parser.link16.messages.j7_0 import J70DataUpdateDecoder
        parser.register(J70DataUpdateDecoder())
@@ -73,3 +73,13 @@ Existing implementations
 - ``j3_2.py``  — J3.2 Air Track (stub — awaiting MIL-STD-6016).
 - ``j28_2.py`` — J28.2 Free Text (stub — awaiting MIL-STD-6016).
 """
+
+from link16_parser.link16.messages.j2_2 import J22AirPpliDecoder
+from link16_parser.link16.messages.j3_2 import J32AirTrackDecoder
+from link16_parser.link16.messages.j28_2 import J282FreeTextDecoder
+
+__all__ = [
+    "J22AirPpliDecoder",
+    "J32AirTrackDecoder",
+    "J282FreeTextDecoder",
+]

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from link16_parser.core.types import Identity, Link16Message, Track
-from link16_parser.tracks.database import TrackDatabase
+from link16_parser.core import Identity, Link16Message, Track
+from link16_parser.tracks import TrackDatabase
 
 TS = datetime(2024, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
 TS2 = datetime(2024, 3, 15, 12, 1, 0, tzinfo=timezone.utc)

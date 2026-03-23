@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from link16_parser.core.types import RawJWord, WordFormat
-from link16_parser.link16.parser import JWordParser, parse_jword_header
+from link16_parser.core import RawJWord, WordFormat
+from link16_parser.link16 import JWordParser, parse_jword_header
 
 from tests.builders import make_jword
 

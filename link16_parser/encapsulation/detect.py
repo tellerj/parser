@@ -6,10 +6,15 @@ Falls back to trying all decoders if heuristics are inconclusive.
 
 from __future__ import annotations
 
+import logging
+from typing import Sequence
+
+from link16_parser.core.interfaces import EncapsulationDecoder
 from link16_parser.core.types import RawJWord
-from link16_parser.encapsulation.jreap_c import JreapCDecoder
-from link16_parser.encapsulation.simple import SYNC_BYTE_1, SYNC_BYTE_2, SimpleDecoder
-from link16_parser.encapsulation.siso_j import DIS_SIGNAL_PDU_TYPE, SisoJDecoder
+from link16_parser.encapsulation.simple import SYNC_BYTE_1, SYNC_BYTE_2
+from link16_parser.encapsulation.siso_j import DIS_SIGNAL_PDU_TYPE
+
+logger = logging.getLogger(__name__)
 
 
 class AutoDecoder:
@@ -19,13 +24,21 @@ class AutoDecoder:
         1. Bytes 0-1 are ``0x49 0x36`` -> SIMPLE.
         2. Byte 2 is ``0x1A`` (26) -> DIS Signal PDU (SISO-J).
         3. Fallback: try each decoder and return the first non-empty result.
+
+    Args:
+        decoders: Sequence of ``EncapsulationDecoder`` instances to use.
+            If ``None``, defaults to ``[SimpleDecoder(), SisoJDecoder(),
+            JreapCDecoder()]``.
     """
 
-    def __init__(self) -> None:
-        self._simple = SimpleDecoder()
-        self._siso_j = SisoJDecoder()
-        self._jreap_c = JreapCDecoder()
-        self._decoders = [self._simple, self._siso_j, self._jreap_c]
+    def __init__(self, decoders: Sequence[EncapsulationDecoder] | None = None) -> None:
+        if decoders is None:
+            from link16_parser.encapsulation.simple import SimpleDecoder
+            from link16_parser.encapsulation.siso_j import SisoJDecoder
+            from link16_parser.encapsulation.jreap_c import JreapCDecoder
+            decoders = [SimpleDecoder(), SisoJDecoder(), JreapCDecoder()]
+        self._decoders = list(decoders)
+        self._by_name = {d.name: d for d in self._decoders}
 
     @property
     def name(self) -> str:
@@ -47,11 +60,15 @@ class AutoDecoder:
 
         # SIMPLE: sync bytes 0x49 0x36
         if payload[0] == SYNC_BYTE_1 and payload[1] == SYNC_BYTE_2:
-            return self._simple.decode(payload, pcap_timestamp)
+            simple = self._by_name.get("SIMPLE")
+            if simple:
+                return simple.decode(payload, pcap_timestamp)
 
         # DIS Signal PDU: PDU type at offset 2
         if len(payload) > 2 and payload[2] == DIS_SIGNAL_PDU_TYPE:
-            return self._siso_j.decode(payload, pcap_timestamp)
+            siso_j = self._by_name.get("SISO-J")
+            if siso_j:
+                return siso_j.decode(payload, pcap_timestamp)
 
         # Fallback: try each decoder
         for decoder in self._decoders:
@@ -59,4 +76,8 @@ class AutoDecoder:
             if words:
                 return words
 
+        logger.debug(
+            "No decoder matched payload (%d bytes, first bytes: %s)",
+            len(payload), payload[:8].hex(),
+        )
         return []
