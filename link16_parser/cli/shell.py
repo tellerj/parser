@@ -10,8 +10,8 @@ import shlex
 from typing import TextIO
 import sys
 
-from jreap_parser.core.interfaces import OutputFormatter
-from jreap_parser.tracks.database import TrackDatabase
+from link16_parser.core.interfaces import OutputFormatter
+from link16_parser.tracks.database import TrackDatabase
 
 
 class InteractiveShell:
@@ -55,7 +55,7 @@ class InteractiveShell:
     def run(self) -> None:
         """Start the interactive shell loop."""
         self._running = True
-        self._print("JREAP-C Parser — Type 'help' for commands.")
+        self._print("Link 16 Parser — Type 'help' for commands.")
         self._print(f"Default format: {self._current_format}")
         self._print("")
 

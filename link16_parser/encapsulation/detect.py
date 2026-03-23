@@ -6,10 +6,10 @@ Falls back to trying all decoders if heuristics are inconclusive.
 
 from __future__ import annotations
 
-from jreap_parser.core.types import RawJWord
-from jreap_parser.encapsulation.jreap_c import JreapCDecoder
-from jreap_parser.encapsulation.simple import SYNC_BYTE_1, SYNC_BYTE_2, SimpleDecoder
-from jreap_parser.encapsulation.siso_j import DIS_SIGNAL_PDU_TYPE, SisoJDecoder
+from link16_parser.core.types import RawJWord
+from link16_parser.encapsulation.jreap_c import JreapCDecoder
+from link16_parser.encapsulation.simple import SYNC_BYTE_1, SYNC_BYTE_2, SimpleDecoder
+from link16_parser.encapsulation.siso_j import DIS_SIGNAL_PDU_TYPE, SisoJDecoder
 
 
 class AutoDecoder:

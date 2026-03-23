@@ -11,7 +11,7 @@ How to add a new output format
 2. Write a class with two members that match the ``OutputFormatter``
    protocol::
 
-       from jreap_parser.core.types import Track
+       from link16_parser.core.types import Track
 
        class BullseyeFormatter:
            @property
@@ -28,7 +28,7 @@ How to add a new output format
 
 3. Register it in ``__main__.py`` by adding it to the ``formatters`` dict::
 
-       from jreap_parser.output.bullseye import BullseyeFormatter
+       from link16_parser.output.bullseye import BullseyeFormatter
        formatters["BULLSEYE"] = BullseyeFormatter()
 
    The CLI shell will automatically pick it up — users can switch to

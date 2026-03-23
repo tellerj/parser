@@ -11,7 +11,7 @@ How to add a new message decoder
 2. Write a class with four members that match the ``MessageDecoder``
    protocol::
 
-       from jreap_parser.core.types import Link16Message, RawJWord
+       from link16_parser.core.types import Link16Message, RawJWord
 
        LABEL = 7
        SUBLABEL = 0
@@ -45,7 +45,7 @@ How to add a new message decoder
 
 3. Register it in ``__main__.py`` inside ``build_jword_parser()``::
 
-       from jreap_parser.link16.messages.j7_0 import J70DataUpdateDecoder
+       from link16_parser.link16.messages.j7_0 import J70DataUpdateDecoder
        parser.register(J70DataUpdateDecoder())
 
    That's it. The ``JWordParser`` will automatically route any J-word with

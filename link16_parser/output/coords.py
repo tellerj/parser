@@ -6,7 +6,7 @@ Converts between decimal degrees (from Link 16) and military grid format
 
 from __future__ import annotations
 
-from jreap_parser.core.types import Position
+from link16_parser.core.types import Position
 
 
 def decimal_to_military_lat(decimal_degrees: float) -> str:

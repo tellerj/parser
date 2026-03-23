@@ -1,30 +1,57 @@
 """In-memory track database.
 
 Maintains the most recent state for each tracked entity, keyed by STN.
-Supports lookup by STN, track number, or callsign.
-Thread-safe for single-writer / single-reader (ingestion thread writes,
-CLI thread reads).
+Supports lookup by STN, track number, or callsign. Notifies registered
+listeners on every track update, enabling downstream consumers (network
+output, visualizers) to react in near-real-time.
+
+Thread-safe for single-writer / multiple-reader use (ingestion thread
+writes, CLI thread and network output threads read).
 """
 
 from __future__ import annotations
 
+import logging
 import threading
-from typing import Iterator
+from typing import Callable, Iterator
 
-from jreap_parser.core.types import Link16Message, Track
+from link16_parser.core.types import Link16Message, Track
+
+logger = logging.getLogger(__name__)
+
+# Type alias for update listener callbacks
+TrackListener = Callable[[Track, Link16Message], None]
 
 
 class TrackDatabase:
     """In-memory store of ``Track`` objects, keyed by Source Track Number.
 
     Thread safety: all public methods acquire a lock, making this safe
-    for the single-writer (ingestion thread) / single-reader (CLI thread)
-    pattern used by the main entry point.
+    for the single-writer (ingestion thread) / multiple-reader (CLI thread,
+    network output threads) pattern used by the main entry point.
+
+    Supports an observer pattern: registered listeners are called after
+    every track update, inside the lock. Listeners should be fast and
+    non-blocking — heavy work (network I/O, formatting) should be
+    dispatched to a queue or separate thread.
     """
 
     def __init__(self) -> None:
         self._tracks: dict[int, Track] = {}  # keyed by STN
         self._lock = threading.Lock()
+        self._listeners: list[TrackListener] = []
+
+    def on_update(self, listener: TrackListener) -> None:
+        """Register a callback invoked after every track update.
+
+        The callback receives the updated ``Track`` and the
+        ``Link16Message`` that triggered the update. It is called
+        inside the database lock — keep it fast and non-blocking.
+
+        Args:
+            listener: A callable ``(Track, Link16Message) -> None``.
+        """
+        self._listeners.append(listener)
 
     def update(self, message: Link16Message) -> Track:
         """Update (or create) a track from a decoded Link 16 message.
@@ -33,6 +60,8 @@ class TrackDatabase:
         in the message overwrite the track's current value. This means
         a J2.2 PPLI (which carries position but not identity) won't
         clobber the identity set by an earlier J3.2 Air Track.
+
+        After merging, all registered listeners are notified.
 
         Args:
             message: A decoded ``Link16Message``. Its ``stn`` field
@@ -68,6 +97,13 @@ class TrackDatabase:
 
             track.last_updated = message.timestamp
             track.message_count += 1
+
+            # Notify listeners
+            for listener in self._listeners:
+                try:
+                    listener(track, message)
+                except Exception:
+                    logger.exception("Track update listener error")
 
             return track
 

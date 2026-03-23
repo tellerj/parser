@@ -10,8 +10,8 @@ import logging
 import struct
 from typing import Callable
 
-from jreap_parser.core.interfaces import MessageDecoder
-from jreap_parser.core.types import Link16Message, RawJWord, WordFormat
+from link16_parser.core.interfaces import MessageDecoder
+from link16_parser.core.types import Link16Message, RawJWord, WordFormat
 
 logger = logging.getLogger(__name__)
 

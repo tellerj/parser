@@ -14,7 +14,7 @@ from __future__ import annotations
 import struct
 from datetime import datetime, timezone
 
-from jreap_parser.core.types import RawJWord
+from link16_parser.core.types import RawJWord
 
 # SIMPLE sync bytes
 SYNC_BYTE_1 = 0x49

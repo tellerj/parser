@@ -6,8 +6,8 @@ military standard — it's a convenience format for quick reference.
 
 from __future__ import annotations
 
-from jreap_parser.core.types import Track
-from jreap_parser.output.coords import position_to_lm
+from link16_parser.core.types import Track
+from link16_parser.output.coords import position_to_lm
 
 
 class NineLineFormatter:

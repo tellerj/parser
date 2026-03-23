@@ -9,7 +9,7 @@ Stub implementation until spec is available.
 
 from __future__ import annotations
 
-from jreap_parser.core.types import Link16Message, RawJWord
+from link16_parser.core.types import Link16Message, RawJWord
 
 # J28.2: Label=28, Sublabel=2
 LABEL = 28

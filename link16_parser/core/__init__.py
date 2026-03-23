@@ -1,16 +1,18 @@
 """Core data types and interfaces."""
 
-from jreap_parser.core.types import (
+from link16_parser.core.types import (
     RawJWord,
     Link16Message,
     Track,
+    TrackStatus,
     Position,
     PlatformId,
 )
-from jreap_parser.core.interfaces import (
+from link16_parser.core.interfaces import (
     EncapsulationDecoder,
     MessageDecoder,
     OutputFormatter,
+    OutputSink,
     PacketSource,
 )
 
@@ -18,10 +20,12 @@ __all__ = [
     "RawJWord",
     "Link16Message",
     "Track",
+    "TrackStatus",
     "Position",
     "PlatformId",
     "EncapsulationDecoder",
     "MessageDecoder",
     "OutputFormatter",
+    "OutputSink",
     "PacketSource",
 ]

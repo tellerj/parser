@@ -15,7 +15,7 @@ from __future__ import annotations
 import struct
 from datetime import datetime, timezone
 
-from jreap_parser.core.types import RawJWord
+from link16_parser.core.types import RawJWord
 
 # DIS constants
 DIS_SIGNAL_PDU_TYPE = 26

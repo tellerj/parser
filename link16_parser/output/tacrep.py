@@ -6,8 +6,8 @@ Output is copy/paste ready for direct dissemination.
 
 from __future__ import annotations
 
-from jreap_parser.core.types import Track
-from jreap_parser.output.coords import position_to_lm
+from link16_parser.core.types import Track
+from link16_parser.output.coords import position_to_lm
 
 
 class TacrepFormatter:
@@ -26,7 +26,7 @@ class TacrepFormatter:
 
     def __init__(
         self,
-        originator: str = "JREAP-PARSER",
+        originator: str = "L16-PARSER",
         classification: str = "UNCLAS",
     ) -> None:
         self._originator = originator
@@ -46,7 +46,7 @@ class TacrepFormatter:
             A multi-line string (newline-separated, no trailing newline)::
 
                 UNCLAS
-                MSGID/TACREP/JREAP-PARSER//
+                MSGID/TACREP/L16-PARSER//
                 AIROP/311500Z/1/US/FTR/F16C/TN:225/LM:3015N08000W//
                 CRS:200/SPD:650KPH/ALT:2500M//
                 AMPN/RULDOG01//

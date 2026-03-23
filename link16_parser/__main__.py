@@ -2,13 +2,19 @@
 
 Usage:
     # From a PCAP file:
-    python -m jreap_parser --file capture.pcap
+    python -m link16_parser --file capture.pcap
 
     # From a live pipe:
-    tcpdump -w - | python -m jreap_parser --pipe
+    tcpdump -w - | python -m link16_parser --pipe
 
     # Specify encapsulation format (default: auto-detect):
-    python -m jreap_parser --file capture.pcap --encap simple
+    python -m link16_parser --file capture.pcap --encap simple
+
+    # Filter ingestion to a specific port:
+    python -m link16_parser --file capture.pcap --port 4444
+
+    # Stream formatted output to a remote endpoint:
+    python -m link16_parser --file capture.pcap --output-host 192.168.1.10 --output-port 9000
 """
 
 from __future__ import annotations
@@ -18,27 +24,28 @@ import logging
 import sys
 import threading
 
-from jreap_parser.cli.shell import InteractiveShell
-from jreap_parser.core.interfaces import EncapsulationDecoder, PacketSource
-from jreap_parser.encapsulation.detect import AutoDecoder
-from jreap_parser.encapsulation.jreap_c import JreapCDecoder
-from jreap_parser.encapsulation.simple import SimpleDecoder
-from jreap_parser.encapsulation.siso_j import SisoJDecoder
-from jreap_parser.ingestion.pcap_reader import PcapFileSource, PcapPipeSource
-from jreap_parser.link16.messages.j2_2 import J22AirPpliDecoder
-from jreap_parser.link16.messages.j28_2 import J282FreeTextDecoder
-from jreap_parser.link16.messages.j3_2 import J32AirTrackDecoder
-from jreap_parser.link16.parser import JWordParser
-from jreap_parser.output.nineline import NineLineFormatter
-from jreap_parser.output.tacrep import TacrepFormatter
-from jreap_parser.tracks.database import TrackDatabase
+from link16_parser.cli.shell import InteractiveShell
+from link16_parser.core.interfaces import EncapsulationDecoder, PacketSource
+from link16_parser.encapsulation.detect import AutoDecoder
+from link16_parser.encapsulation.jreap_c import JreapCDecoder
+from link16_parser.encapsulation.simple import SimpleDecoder
+from link16_parser.encapsulation.siso_j import SisoJDecoder
+from link16_parser.ingestion.pcap_reader import PcapFileSource, PcapPipeSource
+from link16_parser.link16.messages.j2_2 import J22AirPpliDecoder
+from link16_parser.link16.messages.j28_2 import J282FreeTextDecoder
+from link16_parser.link16.messages.j3_2 import J32AirTrackDecoder
+from link16_parser.link16.parser import JWordParser
+from link16_parser.network.sink import NetworkSink
+from link16_parser.output.nineline import NineLineFormatter
+from link16_parser.output.tacrep import TacrepFormatter
+from link16_parser.tracks.database import TrackDatabase
 
-logger = logging.getLogger("jreap_parser")
+logger = logging.getLogger("link16_parser")
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="jreap_parser",
+        prog="link16-parser",
         description="Parse Link 16 PCAP traffic and produce TACREPs.",
     )
     source = p.add_mutually_exclusive_group(required=True)
@@ -51,7 +58,24 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Encapsulation format (default: auto-detect)",
     )
-    p.add_argument("--originator", default="JREAP-PARSER", help="TACREP originator field")
+    p.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Only process packets on this port (src or dst). Default: all ports.",
+    )
+
+    net = p.add_argument_group("network output", "Stream formatted output to a remote endpoint")
+    net.add_argument("--output-host", default=None, help="Remote host for network output sink")
+    net.add_argument("--output-port", type=int, default=None, help="Remote port for network output sink")
+    net.add_argument(
+        "--output-proto",
+        choices=["tcp", "udp"],
+        default="tcp",
+        help="Transport protocol for network output (default: tcp)",
+    )
+
+    p.add_argument("--originator", default="L16-PARSER", help="TACREP originator field")
     p.add_argument("--classification", default="UNCLAS", help="Classification marking")
     p.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     return p
@@ -136,22 +160,36 @@ def main() -> None:
 
     # Build pipeline components
     if args.file:
-        source = PcapFileSource(args.file)
+        source: PacketSource = PcapFileSource(args.file, port_filter=args.port)
     else:
-        source = PcapPipeSource()
+        source = PcapPipeSource(port_filter=args.port)
 
     encap_decoder = build_encap_decoder(args.encap)
     jword_parser = build_jword_parser()
     track_db = TrackDatabase()
 
     # Output formatters
+    tacrep_fmt = TacrepFormatter(
+        originator=args.originator,
+        classification=args.classification,
+    )
     formatters = {
-        "TACREP": TacrepFormatter(
-            originator=args.originator,
-            classification=args.classification,
-        ),
+        "TACREP": tacrep_fmt,
         "9-LINE": NineLineFormatter(),
     }
+
+    # Network output sink (optional)
+    network_sink: NetworkSink | None = None
+    if args.output_host and args.output_port:
+        network_sink = NetworkSink(
+            host=args.output_host,
+            port=args.output_port,
+            protocol=args.output_proto,
+            formatter=tacrep_fmt,
+        )
+        network_sink.start()
+        track_db.on_update(network_sink.on_track_update)
+        logger.info("Network sink active: %s", network_sink.name)
 
     # Start ingestion in background thread
     stop_event = threading.Event()
@@ -170,6 +208,8 @@ def main() -> None:
     finally:
         stop_event.set()
         ingestion_thread.join(timeout=2.0)
+        if network_sink is not None:
+            network_sink.stop()
 
 
 if __name__ == "__main__":

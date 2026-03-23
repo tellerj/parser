@@ -17,7 +17,7 @@ IMPORTANT: Exact bit positions require MIL-STD-6016. Stub implementation.
 
 from __future__ import annotations
 
-from jreap_parser.core.types import Link16Message, RawJWord
+from link16_parser.core.types import Link16Message, RawJWord
 
 # J3.2: Label=3, Sublabel=2
 LABEL = 3

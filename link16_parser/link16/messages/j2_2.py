@@ -21,7 +21,7 @@ the J-word envelope and produces a message with placeholder field values.
 
 from __future__ import annotations
 
-from jreap_parser.core.types import Link16Message, RawJWord
+from link16_parser.core.types import Link16Message, RawJWord
 
 # J2.2: Label=2, Sublabel=2
 LABEL = 2

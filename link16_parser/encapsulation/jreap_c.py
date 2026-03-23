@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 
-from jreap_parser.core.types import RawJWord
+from link16_parser.core.types import RawJWord
 
 logger = logging.getLogger(__name__)
 

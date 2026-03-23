@@ -4,6 +4,10 @@ Reads PCAP data (libpcap format, both endiannesses), strips Ethernet/IP/
 UDP|TCP headers, and yields ``(timestamp, payload)`` tuples for downstream
 encapsulation decoding. Both classes satisfy the ``PacketSource`` protocol.
 
+Supports optional port filtering via ``--port`` to skip irrelevant traffic
+early in the pipeline (before encapsulation decoding). When no port filter
+is set, all UDP/TCP packets are yielded regardless of port number.
+
 Supported frame types:
     - Ethernet II (ethertype 0x0800 = IPv4) only. 802.1Q VLAN tags, IPv6,
       and non-Ethernet link layers are silently skipped.
@@ -28,15 +32,16 @@ UDP_HEADER_LEN = 8
 TCP_HEADER_MIN_LEN = 20
 
 
-def _strip_to_transport_payload(frame: bytes) -> bytes | None:
-    """Strip Ethernet, IP, and UDP/TCP headers from a raw frame.
+def _parse_frame(frame: bytes) -> tuple[bytes, int, int] | None:
+    """Parse an Ethernet/IP/UDP|TCP frame.
 
     Args:
         frame: A complete captured Ethernet frame (including Ethernet header).
 
     Returns:
-        The transport-layer payload bytes (everything after the UDP or TCP
-        header), or ``None`` if the frame is not Ethernet II / IPv4 / UDP|TCP.
+        A tuple of ``(payload, src_port, dst_port)`` where *payload* is the
+        transport-layer payload bytes, or ``None`` if the frame is not
+        Ethernet II / IPv4 / UDP|TCP.
     """
     if len(frame) < ETHERNET_HEADER_LEN + IP_HEADER_MIN_LEN:
         return None
@@ -58,13 +63,17 @@ def _strip_to_transport_payload(frame: bytes) -> bytes | None:
     if protocol == 17:  # UDP
         if len(frame) < transport_offset + UDP_HEADER_LEN:
             return None
-        return frame[transport_offset + UDP_HEADER_LEN:]
+        src_port, dst_port = struct.unpack_from("!HH", frame, transport_offset)
+        payload = frame[transport_offset + UDP_HEADER_LEN:]
+        return payload, src_port, dst_port
 
     elif protocol == 6:  # TCP
         if len(frame) < transport_offset + TCP_HEADER_MIN_LEN:
             return None
+        src_port, dst_port = struct.unpack_from("!HH", frame, transport_offset)
         tcp_data_offset = (frame[transport_offset + 12] >> 4) * 4
-        return frame[transport_offset + tcp_data_offset:]
+        payload = frame[transport_offset + tcp_data_offset:]
+        return payload, src_port, dst_port
 
     return None
 
@@ -76,15 +85,19 @@ class PcapFileSource:
 
     Args:
         path: Filesystem path to a ``.pcap`` file.
+        port_filter: If set, only yield packets where either the source
+            or destination port matches this value. ``None`` means no
+            filtering (yield all UDP/TCP packets).
     """
 
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, port_filter: int | None = None) -> None:
         self._path = path
+        self._port_filter = port_filter
 
     def packets(self) -> Iterator[tuple[float, bytes]]:
-        """Yield ``(timestamp, payload)`` for every IP packet in the file."""
+        """Yield ``(timestamp, payload)`` for every matching IP packet."""
         with open(self._path, "rb") as f:
-            yield from _read_pcap_stream(f)
+            yield from _read_pcap_stream(f, self._port_filter)
 
 
 class PcapPipeSource:
@@ -92,14 +105,25 @@ class PcapPipeSource:
 
     Satisfies the ``PacketSource`` protocol. Use this when PCAP data is
     piped from ``tcpdump -w -`` or a redirection tunnel.
+
+    Args:
+        port_filter: If set, only yield packets where either the source
+            or destination port matches this value. ``None`` means no
+            filtering (yield all UDP/TCP packets).
     """
+
+    def __init__(self, port_filter: int | None = None) -> None:
+        self._port_filter = port_filter
 
     def packets(self) -> Iterator[tuple[float, bytes]]:
         """Yield ``(timestamp, payload)`` as packets arrive on stdin."""
-        yield from _read_pcap_stream(sys.stdin.buffer)
+        yield from _read_pcap_stream(sys.stdin.buffer, self._port_filter)
 
 
-def _read_pcap_stream(stream: BinaryIO) -> Iterator[tuple[float, bytes]]:
+def _read_pcap_stream(
+    stream: BinaryIO,
+    port_filter: int | None = None,
+) -> Iterator[tuple[float, bytes]]:
     """Parse a libpcap byte stream and yield ``(timestamp, payload)`` tuples.
 
     Handles both little-endian (magic ``0xA1B2C3D4``) and big-endian
@@ -108,10 +132,13 @@ def _read_pcap_stream(stream: BinaryIO) -> Iterator[tuple[float, bytes]]:
     Args:
         stream: A readable binary stream positioned at the start of the
             libpcap global header (byte 0 of the file/pipe).
+        port_filter: If set, only yield packets where either the source
+            or destination port matches. ``None`` means yield all.
 
     Yields:
         ``(pcap_timestamp, transport_payload)`` tuples for each valid
-        Ethernet/IPv4/UDP|TCP packet. Non-matching packets are skipped.
+        Ethernet/IPv4/UDP|TCP packet that passes the port filter.
+        Non-matching packets are skipped.
 
     Raises:
         ValueError: If the stream does not start with a valid libpcap
@@ -146,9 +173,20 @@ def _read_pcap_stream(stream: BinaryIO) -> Iterator[tuple[float, bytes]]:
         if frame is None:
             return
 
-        payload = _strip_to_transport_payload(frame)
-        if payload is not None and len(payload) > 0:
-            yield (timestamp, payload)
+        parsed = _parse_frame(frame)
+        if parsed is None:
+            continue
+
+        payload, src_port, dst_port = parsed
+        if len(payload) == 0:
+            continue
+
+        # Apply port filter if configured
+        if port_filter is not None:
+            if src_port != port_filter and dst_port != port_filter:
+                continue
+
+        yield (timestamp, payload)
 
 
 def _read_exact(stream: BinaryIO, n: int) -> bytes | None:

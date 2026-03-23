@@ -20,7 +20,12 @@ from __future__ import annotations
 
 from typing import Iterator, Protocol
 
-from jreap_parser.core.types import Link16Message, RawJWord, Track
+from link16_parser.core.types import Link16Message, RawJWord, Track
+
+# Re-export for convenience — modules that import from core.interfaces
+# can also pick up the TrackListener type alias.
+from typing import Callable
+TrackListener = Callable[[Track, Link16Message], None]
 
 
 # ---------------------------------------------------------------------------
@@ -208,5 +213,66 @@ class OutputFormatter(Protocol):
         Returns:
             A multi-line string ready to copy/paste for dissemination.
             No ANSI codes, no trailing whitespace.
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Output sinks (network streaming, file logging, etc.)
+# ---------------------------------------------------------------------------
+
+class OutputSink(Protocol):
+    """Receives track updates and delivers them to an external destination.
+
+    Unlike ``OutputFormatter`` (which produces a string on demand), an
+    ``OutputSink`` is *push-based* — it reacts to every track update
+    from the ``TrackDatabase`` and delivers data to a downstream consumer
+    (network socket, file, message queue, etc.).
+
+    Sinks are registered with ``TrackDatabase.on_update()`` and receive
+    callbacks on every track change. The ``start()`` / ``stop()`` lifecycle
+    methods handle resource setup and teardown (opening sockets, etc.).
+
+    Implementations:
+        ``NetworkSink`` — streams formatted reports to a TCP/UDP endpoint.
+    """
+
+    @property
+    def name(self) -> str:
+        """Human-readable name for this sink.
+
+        Returns:
+            Short identifier string — e.g. ``"TCP:192.168.1.10:9000"``.
+        """
+        ...
+
+    def start(self) -> None:
+        """Initialize resources (open sockets, files, connections).
+
+        Called once before the ingestion loop begins. Implementations
+        should raise on failure (e.g. connection refused) so the main
+        entry point can report the error before starting ingestion.
+        """
+        ...
+
+    def stop(self) -> None:
+        """Release resources (close sockets, flush buffers).
+
+        Called once during shutdown. Must be idempotent — safe to call
+        even if ``start()`` was never called or already failed.
+        """
+        ...
+
+    def on_track_update(self, track: Track, message: Link16Message) -> None:
+        """Handle a track update event.
+
+        This is the method registered with ``TrackDatabase.on_update()``.
+        It is called inside the database lock, so it must be fast and
+        non-blocking. For I/O-heavy work, enqueue the data and return
+        immediately.
+
+        Args:
+            track: The updated track (post-merge state).
+            message: The ``Link16Message`` that triggered the update.
         """
         ...

@@ -46,6 +46,20 @@ class WordFormat(IntEnum):
     EXTENSION = 2
 
 
+class TrackStatus(Enum):
+    """Lifecycle state of a track in the database.
+
+    Tracks begin as ``ACTIVE`` on first message and remain so as long as
+    updates keep arriving. Downstream consumers (aging policies, display
+    logic, sinks) can use this field to distinguish live tracks from
+    those that have gone quiet.
+    """
+
+    ACTIVE = "ACTIVE"
+    STALE = "STALE"
+    DROPPED = "DROPPED"
+
+
 # ---------------------------------------------------------------------------
 # Position
 # ---------------------------------------------------------------------------
@@ -175,6 +189,9 @@ class Track:
 
     Attributes:
         stn: Source Track Number — the primary key in ``TrackDatabase``.
+        status: Lifecycle state — ``ACTIVE``, ``STALE``, or ``DROPPED``.
+            All tracks start as ``ACTIVE``. Transitions are managed by
+            ``TrackDatabase`` (e.g. aging policy).
         track_number: 5-character alphanumeric track number (e.g. ``"A1234"``),
             if known from J3.x surveillance messages.
         callsign: Voice callsign (e.g. ``"RULDOG01"``), if known.
@@ -188,6 +205,7 @@ class Track:
     """
 
     stn: int
+    status: TrackStatus = TrackStatus.ACTIVE
     track_number: str | None = None
     callsign: str | None = None
     position: Position | None = None
