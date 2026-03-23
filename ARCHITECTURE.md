@@ -244,7 +244,7 @@ No other module is affected.
 
 ## Pluggable Extension Points
 
-The architecture has four pluggable seams — places where you can add
+The architecture has five pluggable seams — places where you can add
 new implementations without modifying existing code (beyond wiring).
 
 | Extension Point | Protocol | Where to add | How to register |
