@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Pre-commit hook: enforce zero pyright errors and warnings.
+
+set -euo pipefail
+
+# Locate pyright — check common paths if not on PATH.
+PYRIGHT="$(command -v pyright 2>/dev/null || true)"
+if [ -z "$PYRIGHT" ]; then
+    for candidate in "$HOME/.local/bin/pyright" .venv/bin/pyright; do
+        if [ -x "$candidate" ]; then
+            PYRIGHT="$candidate"
+            break
+        fi
+    done
+fi
+
+if [ -z "$PYRIGHT" ]; then
+    echo "pre-commit: pyright not found — skipping type check."
+    echo "  Install with: pip install pyright"
+    exit 0
+fi
+
+# Run from the repo root so pyrightconfig.json is found.
+cd "$(git rev-parse --show-toplevel)"
+
+echo "pre-commit: running pyright..."
+if ! "$PYRIGHT" 2>&1; then
+    echo ""
+    echo "pre-commit: pyright found errors or warnings. Fix them before committing."
+    exit 1
+fi
