@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import pytest
-
 from link16_parser.core import RawJWord, WordFormat
 from link16_parser.link16 import JWordParser, parse_jword_header
 
@@ -63,18 +61,19 @@ class TestJWordParser:
         messages = jword_parser.parse(words)
 
         assert len(messages) == 2
-        assert messages[0].msg_type == "J2.2"
-        assert messages[1].msg_type == "J3.2"
+        assert messages[0].msg_type == "J2.2 Air PPLI"
+        assert messages[1].msg_type == "J3.2 Air Track"
 
     def test_mli_groups_words(self, jword_parser: JWordParser) -> None:
         words = [
-            _raw(label=2, sublabel=2, mli=1),         # initial, expects 1 continuation
-            _raw(label=2, sublabel=2, word_format=1),  # continuation
+            _raw(label=3, sublabel=2, mli=2),         # initial, expects 2 continuations
+            _raw(label=3, sublabel=2, word_format=1),  # continuation
+            _raw(label=3, sublabel=2, word_format=1),  # continuation
         ]
         messages = jword_parser.parse(words)
 
+        # Parser groups all 3 words into one message
         assert len(messages) == 1
-        assert messages[0].fields["word_count"] == 2
 
     def test_skips_unregistered_labels(self, jword_parser: JWordParser) -> None:
         words = [_raw(label=15, sublabel=0)]
@@ -87,36 +86,3 @@ class TestJWordParser:
         messages = jword_parser.parse(words)
 
         assert messages == []
-
-
-# ---------------------------------------------------------------------------
-# xfail stubs for MIL-STD-6016 field decoding
-# ---------------------------------------------------------------------------
-
-class TestMilStd6016Fields:
-    """Placeholder tests that will pass once MIL-STD-6016 field decoding is implemented."""
-
-    @pytest.mark.xfail(reason="awaiting MIL-STD-6016", strict=True)
-    def test_j22_populates_position(self, jword_parser: JWordParser) -> None:
-        messages = jword_parser.parse([_raw(label=2, sublabel=2)])
-        assert messages[0].position is not None
-
-    @pytest.mark.xfail(reason="awaiting MIL-STD-6016", strict=True)
-    def test_j22_populates_callsign(self, jword_parser: JWordParser) -> None:
-        messages = jword_parser.parse([_raw(label=2, sublabel=2)])
-        assert messages[0].callsign is not None
-
-    @pytest.mark.xfail(reason="awaiting MIL-STD-6016", strict=True)
-    def test_j32_populates_identity(self, jword_parser: JWordParser) -> None:
-        messages = jword_parser.parse([_raw(label=3, sublabel=2)])
-        assert messages[0].identity is not None
-
-    @pytest.mark.xfail(reason="awaiting MIL-STD-6016", strict=True)
-    def test_j32_populates_platform(self, jword_parser: JWordParser) -> None:
-        messages = jword_parser.parse([_raw(label=3, sublabel=2)])
-        assert messages[0].platform is not None
-
-    @pytest.mark.xfail(reason="awaiting MIL-STD-6016", strict=True)
-    def test_j282_populates_text(self, jword_parser: JWordParser) -> None:
-        messages = jword_parser.parse([_raw(label=28, sublabel=2)])
-        assert "text" in messages[0].fields

@@ -1,0 +1,97 @@
+{
+  "label": 3,
+  "sublabel": 2,
+  "name": "J3.2 Air Track",
+  "fields": [
+    {
+      "name": "track_quality",
+      "word": 0,
+      "start_bit": 0,
+      "length": 4,
+      "type": "integer",
+      "maps_to": "fields.track_quality"
+    },
+    {
+      "name": "identity",
+      "word": 0,
+      "start_bit": 4,
+      "length": 3,
+      "type": "enum",
+      "values": {
+        "0": "PENDING",
+        "1": "UNKNOWN",
+        "2": "ASSUMED FRIEND",
+        "3": "FRIEND",
+        "4": "NEUTRAL",
+        "5": "SUSPECT",
+        "6": "HOSTILE"
+      },
+      "maps_to": "identity"
+    },
+    {
+      "name": "platform_generic",
+      "word": 0,
+      "start_bit": 7,
+      "length": 5,
+      "type": "enum",
+      "values": {
+        "0": "FTR",
+        "1": "BMR",
+        "2": "ATK",
+        "3": "CARGO",
+        "4": "TANKER"
+      },
+      "maps_to": "platform.generic_type"
+    },
+    {
+      "name": "latitude",
+      "word": 1,
+      "start_bit": 0,
+      "length": 23,
+      "type": "scaled",
+      "scale": 0.0000214577,
+      "offset": -90.0,
+      "maps_to": "position.lat"
+    },
+    {
+      "name": "longitude",
+      "word": 1,
+      "start_bit": 23,
+      "length": 24,
+      "type": "scaled",
+      "scale": 0.0000214577,
+      "offset": -180.0,
+      "maps_to": "position.lon"
+    },
+    {
+      "name": "altitude",
+      "word": 2,
+      "start_bit": 0,
+      "length": 16,
+      "type": "scaled",
+      "scale": 3.048,
+      "offset": -304.8,
+      "maps_to": "position.alt_m"
+    },
+    {
+      "name": "heading",
+      "word": 2,
+      "start_bit": 16,
+      "length": 9,
+      "type": "scaled",
+      "scale": 0.703125,
+      "offset": 0,
+      "maps_to": "heading_deg"
+    },
+    {
+      "name": "speed",
+      "word": 2,
+      "start_bit": 25,
+      "length": 12,
+      "type": "scaled",
+      "scale": 1.852,
+      "offset": 0,
+      "maps_to": "speed_kph"
+    }
+  ]
+}

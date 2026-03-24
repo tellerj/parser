@@ -1,0 +1,27 @@
+{
+  "label": 2,
+  "sublabel": 2,
+  "name": "J2.2 Air PPLI",
+  "fields": [
+    {
+      "name": "latitude",
+      "word": 0,
+      "start_bit": 0,
+      "length": 23,
+      "type": "scaled",
+      "scale": 0.0000214577,
+      "offset": -90.0,
+      "maps_to": "position.lat"
+    },
+    {
+      "name": "longitude",
+      "word": 0,
+      "start_bit": 23,
+      "length": 24,
+      "type": "scaled",
+      "scale": 0.0000214577,
+      "offset": -180.0,
+      "maps_to": "position.lon"
+    }
+  ]
+}

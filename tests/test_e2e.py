@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from pathlib import Path
 
 from link16_parser.encapsulation import AutoDecoder
 from link16_parser.ingestion import FileSource
@@ -11,6 +12,8 @@ from link16_parser.link16 import build_parser
 from link16_parser.tracks import TrackDatabase
 
 from tests.builders import make_jword, make_simple_pcap
+
+FIXTURES_DIR = str(Path(__file__).parent / "fixtures")
 
 
 def test_simple_pcap_two_messages_same_stn() -> None:
@@ -33,7 +36,7 @@ def test_simple_pcap_two_messages_same_stn() -> None:
 
         source = FileSource(path)
         encap_decoder = AutoDecoder()
-        jword_parser = build_parser()
+        jword_parser = build_parser(definitions_dir=FIXTURES_DIR)
         track_db = TrackDatabase()
 
         # Run the pipeline inline (no threading needed for tests)
@@ -78,7 +81,7 @@ def test_multiple_stns_create_separate_tracks() -> None:
 
         source = FileSource(path)
         encap_decoder = AutoDecoder()
-        jword_parser = build_parser()
+        jword_parser = build_parser(definitions_dir=FIXTURES_DIR)
         track_db = TrackDatabase()
 
         for pcap_ts, payload in source.packets():

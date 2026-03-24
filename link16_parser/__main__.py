@@ -104,6 +104,11 @@ note:
         help="Transport protocol for network output (default: tcp)",
     )
 
+    p.add_argument(
+        "--definitions-dir",
+        default=None,
+        help="Path to directory of JSON message definitions (MIL-STD-6016 field layouts)",
+    )
     p.add_argument("--originator", default="L16-PARSER", help="TACREP originator field")
     p.add_argument("--classification", default="UNCLAS", help="Classification marking")
     p.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
@@ -183,7 +188,7 @@ def main() -> None:
     # Build pipeline components
     source = build_source(file=args.file, pipe=args.pipe, port_filter=args.port)
     encap_decoder = build_decoder(args.encap)
-    jword_parser = build_parser()
+    jword_parser = build_parser(definitions_dir=args.definitions_dir)
     track_db = TrackDatabase()
 
     # Output formatters

@@ -1,53 +1,74 @@
 """Link 16 J-word parsing and message decoding.
 
 Parses the public envelope of each J-word (word format, label, sublabel,
-MLI) and routes complete messages to registered ``MessageDecoder``
-implementations.
+MLI) and routes complete messages to registered ``DefinitionDecoder``
+implementations loaded from JSON definition files.
 
-How to add a new message decoder
-=================================
+How to add a new message type
+==============================
 
-1. Create a new module in ``link16/messages/`` (e.g. ``j7_0.py``).
+Create a JSON definition file describing the bit-field layout. See
+``messages/schema.py`` for the format specification and
+``scripts/validate_definitions.py`` to check your work.
 
-2. Write a class that matches the ``MessageDecoder`` protocol — see the
-   detailed guide in ``link16/messages/__init__.py``.
-
-3. Register it in this file (``link16/__init__.py``) inside
-   ``build_parser()``::
-
-       from link16_parser.link16.messages.j7_0 import J70DataUpdateDecoder
-       parser.register(J70DataUpdateDecoder())
-
-4. Write a test in ``tests/`` that constructs known J-words and asserts
-   the correct ``Link16Message`` output.
+Point the tool at the definitions directory via ``--definitions-dir``
+or the ``LINK16_DEFINITIONS`` environment variable, or place the files
+in the built-in ``definitions/`` directory at build time.
 
 Existing implementations
 ========================
 
-- ``parser.py``       — ``JWordParser``: header parsing + decoder registry.
-- ``messages/j2_2.py``  — J2.2 Air PPLI (stub — awaiting MIL-STD-6016).
-- ``messages/j3_2.py``  — J3.2 Air Track (stub — awaiting MIL-STD-6016).
-- ``messages/j28_2.py`` — J28.2 Free Text (stub — awaiting MIL-STD-6016).
+- ``parser.py``                    — ``JWordParser``: header parsing + decoder registry.
+- ``messages/definition_decoder.py`` — ``DefinitionDecoder``: JSON-driven decoder.
+- ``messages/loader.py``           — JSON definition loading + directory resolution.
+- ``messages/schema.py``           — JSON definition validation.
 """
 
 from __future__ import annotations
 
+import logging
+
 from link16_parser.link16.parser import JWordParser, parse_jword_header
-from link16_parser.link16.messages.j2_2 import J22AirPpliDecoder
-from link16_parser.link16.messages.j3_2 import J32AirTrackDecoder
-from link16_parser.link16.messages.j28_2 import J282FreeTextDecoder
+from link16_parser.link16.messages.definition_decoder import DefinitionDecoder
+from link16_parser.link16.messages.loader import (
+    find_definitions_dir,
+    load_definitions,
+)
+
+logger = logging.getLogger(__name__)
 
 
-def build_parser() -> JWordParser:
-    """Create a ``JWordParser`` with all available message decoders registered.
+def build_parser(definitions_dir: str | None = None) -> JWordParser:
+    """Create a ``JWordParser`` with decoders loaded from JSON definitions.
+
+    Args:
+        definitions_dir: Explicit path to a directory of JSON message
+            definitions. If ``None``, searches ``LINK16_DEFINITIONS``
+            env var and the built-in ``definitions/`` directory.
 
     Returns:
-        A ``JWordParser`` ready to parse J-words from the encapsulation layer.
+        A ``JWordParser`` ready to parse J-words from the encapsulation
+        layer. If no definitions are found, the parser is returned with
+        no decoders registered — unrecognised messages are silently skipped.
     """
     parser = JWordParser()
-    parser.register(J22AirPpliDecoder())
-    parser.register(J32AirTrackDecoder())
-    parser.register(J282FreeTextDecoder())
+
+    defn_dir = find_definitions_dir(definitions_dir)
+    if defn_dir is not None:
+        try:
+            decoders = load_definitions(defn_dir)
+            for decoder in decoders:
+                parser.register(decoder)
+            if decoders:
+                logger.info(
+                    "Loaded %d definition decoder(s) from %s",
+                    len(decoders), defn_dir,
+                )
+        except ValueError:
+            logger.exception("Failed to load definitions from %s", defn_dir)
+    else:
+        logger.debug("No message definitions found — parser has no decoders")
+
     return parser
 
 
@@ -55,7 +76,5 @@ __all__ = [
     "build_parser",
     "JWordParser",
     "parse_jword_header",
-    "J22AirPpliDecoder",
-    "J32AirTrackDecoder",
-    "J282FreeTextDecoder",
+    "DefinitionDecoder",
 ]

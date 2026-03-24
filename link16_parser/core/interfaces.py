@@ -122,9 +122,7 @@ class MessageDecoder(Protocol):
     the parser encounters a matching initial word.
 
     Implementations:
-        ``J22AirPpliDecoder``  — J2.2 Air PPLI (stub, awaiting MIL-STD-6016).
-        ``J32AirTrackDecoder`` — J3.2 Air Track (stub, awaiting MIL-STD-6016).
-        ``J282FreeTextDecoder`` — J28.2 Free Text (stub, awaiting MIL-STD-6016).
+        ``DefinitionDecoder`` — generic decoder driven by JSON field definitions.
     """
 
     @property

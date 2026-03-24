@@ -55,6 +55,45 @@ def make_jword(
     return struct.pack("<H", header_val) + bytes([payload_fill] * 8)
 
 
+def make_jword_with_data(
+    word_format: int = 0,
+    label: int = 2,
+    sublabel: int = 2,
+    mli: int = 0,
+    data_bits: dict[int, tuple[int, int]] | None = None,
+) -> bytes:
+    """Build a 10-byte J-word with specific bits set in the FWF data.
+
+    Like ``make_jword``, but allows setting individual bit ranges in
+    the 57-bit FWF data portion (bits 13-69 of the 80-bit word).
+
+    Args:
+        word_format: Word format field (bits 0-1).
+        label: Label field (bits 2-6).
+        sublabel: Sublabel field (bits 7-9).
+        mli: Message Length Indicator (bits 10-12).
+        data_bits: Mapping of ``{start_bit: (length, value)}`` where
+            *start_bit* is 0-indexed relative to the FWF data portion
+            (bit 0 = bit 13 of the full word). Each *(length, value)*
+            pair is OR'd into the word at the specified position.
+
+    Returns:
+        A 10-byte J-word with the header and requested data bits set.
+    """
+    header_val = make_jword_header(word_format, label, sublabel, mli)
+
+    # Start with a zeroed 80-bit word, set the header.
+    word_int = header_val  # bits 0-15 (only 0-12 meaningful)
+
+    if data_bits:
+        for start_bit, (length, value) in data_bits.items():
+            abs_start = start_bit + 13  # skip header
+            mask = (1 << length) - 1
+            word_int |= (value & mask) << abs_start
+
+    return word_int.to_bytes(10, byteorder="little")
+
+
 # ---------------------------------------------------------------------------
 # SIMPLE encapsulation builder
 # ---------------------------------------------------------------------------
