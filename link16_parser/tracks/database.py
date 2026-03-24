@@ -22,6 +22,16 @@ from link16_parser.core.types import Link16Message, PlatformId, Position, Track
 logger = logging.getLogger(__name__)
 
 
+def _snapshot(track: Track) -> Track:
+    """Create a deep-enough copy of a Track for snapshot isolation.
+
+    ``dataclasses.replace()`` is shallow — mutable containers like
+    ``fields`` would alias the live track's dict. This helper copies
+    the ``fields`` dict so snapshots are fully independent.
+    """
+    return replace(track, fields=dict(track.fields))
+
+
 class TrackDatabase:
     """In-memory store of ``Track`` objects, keyed by Source Track Number.
 
@@ -107,12 +117,17 @@ class TrackDatabase:
             if message.track_number is not None:
                 track.track_number = message.track_number
 
+            # Merge message-specific fields (non-destructive: only overwrites
+            # keys that the new message carries).
+            if message.fields:
+                track.fields.update(message.fields)
+
             track.last_updated = message.timestamp
             track.message_count += 1
 
             # Notify listeners — snapshot so listeners can't mutate the
             # live track or see later mutations through a stashed reference.
-            snapshot = replace(track)
+            snapshot = _snapshot(track)
             for listener in self._listeners:
                 try:
                     listener(snapshot, message)
@@ -137,7 +152,7 @@ class TrackDatabase:
         """
         with self._lock:
             track = self._tracks.get(stn)
-            return replace(track) if track is not None else None
+            return _snapshot(track) if track is not None else None
 
     def get_by_callsign(self, callsign: str) -> Track | None:
         """Look up a track by callsign (case-insensitive).
@@ -154,7 +169,7 @@ class TrackDatabase:
         with self._lock:
             for track in self._tracks.values():
                 if track.callsign and track.callsign.upper() == callsign_upper:
-                    return replace(track)
+                    return _snapshot(track)
         return None
 
     def get_by_track_number(self, track_number: str) -> Track | None:
@@ -169,14 +184,15 @@ class TrackDatabase:
         with self._lock:
             for track in self._tracks.values():
                 if track.track_number == track_number:
-                    return replace(track)
+                    return _snapshot(track)
         return None
 
     def find(self, query: str) -> Track | None:
         """Look up a track by any identifier — the CLI's universal search.
 
         Resolution order:
-            1. Try as STN (integer, or 5-digit octal).
+            1. Try as STN — 5-digit strings are parsed as octal (Link 16
+               convention), all other numeric strings as decimal.
             2. Try as track number (exact string match).
             3. Try as callsign (case-insensitive).
 
@@ -195,29 +211,37 @@ class TrackDatabase:
                 stn = int(query, 8) if len(query) == 5 else int(query)
                 track = self._tracks.get(stn)
                 if track is not None:
-                    return replace(track)
+                    return _snapshot(track)
             except ValueError:
                 pass
 
             # Try as track number
             for track in self._tracks.values():
                 if track.track_number == query:
-                    return replace(track)
+                    return _snapshot(track)
 
             # Try as callsign
             callsign_upper = query.upper()
             for track in self._tracks.values():
                 if track.callsign and track.callsign.upper() == callsign_upper:
-                    return replace(track)
+                    return _snapshot(track)
 
         return None
 
     def all_tracks(self) -> list[Track]:
-        """Return a snapshot of all current tracks, sorted by last update."""
+        """Return a snapshot of all current tracks, sorted by last update.
+
+        Tracks that have never been updated sort to the end (by STN).
+        """
         with self._lock:
-            tracks = [replace(t) for t in self._tracks.values()]
-        tracks.sort(key=lambda t: t.last_updated or t.stn, reverse=True)
-        return tracks
+            tracks = [_snapshot(t) for t in self._tracks.values()]
+        # Partition into updated and never-updated to avoid comparing
+        # datetime with int (which raises TypeError).
+        updated = [t for t in tracks if t.last_updated is not None]
+        never_updated = [t for t in tracks if t.last_updated is None]
+        updated.sort(key=lambda t: t.last_updated, reverse=True)  # type: ignore[arg-type]
+        never_updated.sort(key=lambda t: t.stn)
+        return updated + never_updated
 
     def __len__(self) -> int:
         with self._lock:

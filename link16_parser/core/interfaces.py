@@ -75,7 +75,7 @@ class EncapsulationDecoder(Protocol):
     Implementations:
         ``SimpleDecoder`` — STANAG 5602 (fully documented, public).
         ``SisoJDecoder``  — DIS Signal PDU / SISO-STD-002 (public).
-        ``JreapCDecoder``  — MIL-STD-3011 (stub, awaiting spec).
+        ``JreapCDecoder``  — MIL-STD-3011 (stub; replaced at runtime by plugin).
         ``AutoDecoder``   — heuristic dispatcher that tries all of the above.
     """
 

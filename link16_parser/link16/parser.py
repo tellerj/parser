@@ -121,9 +121,9 @@ class JWordParser:
                 i += 1
                 continue
 
-            # MLI tells us how many total words in this message
-            # (including the initial word). 0 means 1 word.
-            msg_word_count = mli + 1 if mli > 0 else 1
+            # MLI = number of additional words after the initial word.
+            # MLI 0 = initial word only; MLI 1 = initial + 1 continuation; etc.
+            msg_word_count = mli + 1
             msg_words = words[i : i + msg_word_count]
             i += msg_word_count
 

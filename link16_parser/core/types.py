@@ -39,7 +39,7 @@ class Identity(Enum):
 
 
 class WordFormat(IntEnum):
-    """J-word format type (bits 0-1 of each 75-bit word)."""
+    """J-word format type (bits 0-1 of each 80-bit word)."""
 
     INITIAL = 0
     CONTINUATION = 1
@@ -115,7 +115,7 @@ class RawJWord:
 
     Attributes:
         data: The raw word bytes — exactly 10 bytes (80 bits).
-            Layout: 70 bits FWF data + 5 bits parity + 5 bits padding.
+            Layout: 13-bit header + 57-bit FWF data + 5-bit parity + 5-bit padding.
         stn: Source Track Number identifying the transmitting JU.
             Extracted from the Link 16 Header Word or encapsulation header.
         npg: Network Participation Group number (0-511). Indicates the
@@ -169,7 +169,7 @@ class Link16Message:
     heading_deg: float | None = None
     speed_kph: float | None = None
     track_number: str | None = None
-    fields: dict[str, object] = field(default_factory=lambda: dict[str, object]())
+    fields: dict[str, object] = field(default_factory=lambda: {})  # noqa: C408
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +203,11 @@ class Track:
         speed_kph: Last-known speed in kilometers per hour.
         last_updated: UTC timestamp of the most recent message for this track.
         message_count: Total number of Link 16 messages received for this track.
+        fields: Message-type-specific data that doesn't fit the common
+            attributes above. Accumulated from ``Link16Message.fields`` on
+            each update — keys are merged non-destructively (new keys are
+            added, existing keys are overwritten only when a new message
+            carries them).
     """
 
     stn: int
@@ -216,3 +221,4 @@ class Track:
     speed_kph: float | None = None
     last_updated: datetime | None = None
     message_count: int = 0
+    fields: dict[str, object] = field(default_factory=lambda: {})  # noqa: C408
