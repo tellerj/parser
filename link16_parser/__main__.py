@@ -103,6 +103,20 @@ note:
         default="tcp",
         help="Transport protocol for network output (default: tcp)",
     )
+    net.add_argument(
+        "--output-format",
+        default="JSON",
+        help="Output format for network sink (default: JSON). "
+             "Must match a registered formatter name (e.g. JSON, CSV, TACREP, 9-LINE, BULLSEYE).",
+    )
+
+    p.add_argument(
+        "--bullseye",
+        default=None,
+        metavar="LAT,LON",
+        help="Set bullseye reference point as LAT,LON in decimal degrees "
+             "(e.g. '37.0,-116.0'). Required to enable the BULLSEYE output format.",
+    )
 
     p.add_argument(
         "--definitions-dir",
@@ -199,22 +213,49 @@ def main() -> None:
     jword_parser = build_parser(definitions_dir=args.definitions_dir)
     track_db = TrackDatabase()
 
+    # Parse bullseye reference point
+    bull_lat: float | None = None
+    bull_lon: float | None = None
+    if args.bullseye is not None:
+        try:
+            parts = args.bullseye.split(",")
+            if len(parts) != 2:
+                raise ValueError("expected LAT,LON")
+            bull_lat, bull_lon = float(parts[0]), float(parts[1])
+        except ValueError:
+            parser.error(
+                f"invalid --bullseye value '{args.bullseye}'. "
+                f"Expected LAT,LON in decimal degrees (e.g. '37.0,-116.0')."
+            )
+
     # Output formatters
     formatters = build_formatters(
         originator=args.originator,
         classification=args.classification,
+        bullseye_lat=bull_lat,
+        bullseye_lon=bull_lon,
     )
 
     # Network output sink (optional)
     network_sink: NetworkSink | None = None
     if args.output_host and args.output_port:
-        # NetworkSink needs a specific formatter, not the dict
-        tacrep_fmt = formatters.get("TACREP")
+        sink_fmt_name = args.output_format.upper()
+        sink_fmt = formatters.get(sink_fmt_name)
+        if sink_fmt is None:
+            if sink_fmt_name == "BULLSEYE":
+                parser.error(
+                    "BULLSEYE output format requires a reference point. "
+                    "Add --bullseye LAT,LON (e.g. --bullseye 37.0,-116.0)."
+                )
+            parser.error(
+                f"unknown output format '{sink_fmt_name}'. "
+                f"Available: {', '.join(formatters.keys())}"
+            )
         network_sink = NetworkSink(
             host=args.output_host,
             port=args.output_port,
             protocol=args.output_proto,
-            formatter=tacrep_fmt,
+            formatter=sink_fmt,
         )
         try:
             network_sink.start()
@@ -227,6 +268,10 @@ def main() -> None:
             sys.exit(1)
         track_db.on_update(network_sink.on_track_update)
         logger.info("Network sink active: %s", network_sink.name)
+        if sink_fmt_name == "BULLSEYE":
+            bull_ref = getattr(sink_fmt, "reference", None)
+            if bull_ref is not None:
+                logger.info("Bullseye reference point: %.4f, %.4f", bull_ref[0], bull_ref[1])
 
     # Start ingestion in background thread
     stop_event = threading.Event()

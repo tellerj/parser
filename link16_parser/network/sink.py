@@ -38,7 +38,7 @@ class NetworkSink:
         port: Remote port number.
         protocol: ``"tcp"`` or ``"udp"``.
         formatter: The ``OutputFormatter`` to use for serializing tracks.
-            Typically a ``TacrepFormatter`` or ``NineLineFormatter``.
+            Selected via ``--output-format`` (default: JSON).
         queue_size: Maximum number of pending messages before dropping.
             ``0`` means unlimited (not recommended for production).
     """
@@ -166,6 +166,8 @@ class NetworkSink:
 
     def _sender_loop(self) -> None:
         """Background thread: drain the queue, format, and send over the socket."""
+        header_sent = False
+
         while self._running or not self._queue.empty():
             try:
                 item = self._queue.get(timeout=0.5)
@@ -181,6 +183,15 @@ class NetworkSink:
 
             track, _message = item
             try:
+                # If the formatter has a header() method (e.g. CSV),
+                # emit it once before the first data row.
+                if not header_sent:
+                    header_fn = getattr(self._formatter, "header", None)
+                    if header_fn is not None:
+                        header_data = (header_fn() + "\n").encode("utf-8")
+                        self._socket.sendall(header_data)
+                    header_sent = True
+
                 formatted = self._formatter.format(track)
                 data = (formatted + "\n").encode("utf-8")
                 if self._protocol == "tcp":

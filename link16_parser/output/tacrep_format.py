@@ -6,8 +6,8 @@ Output is copy/paste ready for direct dissemination.
 
 from __future__ import annotations
 
-from link16_parser.core.types import Track
-from link16_parser.output.coords import position_to_lm
+from link16_parser.core.types import Track, TrackStatus
+from link16_parser.output.coords import format_dtg, position_to_lm
 
 
 class TacrepFormatter:
@@ -58,7 +58,7 @@ class TacrepFormatter:
         line2 = f"MSGID/TACREP/{self._originator}//"
 
         # Line 3: AIROP
-        dtg = self._format_dtg(track)
+        dtg = format_dtg(track.last_updated)
         amount = "1"  # Per-track, so always 1
         nationality = track.platform.nationality if track.platform and track.platform.nationality else "UNK"
         subject_type = track.platform.generic_type if track.platform and track.platform.generic_type else "UNK"
@@ -82,25 +82,22 @@ class TacrepFormatter:
         else:
             line4 = "AMPN/NO AMPLIFYING DATA//"
 
-        # Line 5: Callsign / comms
+        # Line 5: Callsign + identity + status + extra fields
+        ampn_parts: list[str] = []
         if track.callsign:
-            line5 = f"AMPN/{track.callsign}//"
+            ampn_parts.append(track.callsign)
+        if track.identity is not None:
+            ampn_parts.append(f"ID:{track.identity.value}")
+        if track.status != TrackStatus.ACTIVE:
+            ampn_parts.append(f"STATUS:{track.status.value}")
+        for key, val in track.fields.items():
+            if isinstance(val, (str, int, float)):
+                ampn_parts.append(f"{key.upper()}:{val}")
+
+        if ampn_parts:
+            line5 = "AMPN/" + "/".join(ampn_parts) + "//"
         else:
             line5 = "AMPN//"
 
         return "\n".join([line1, line2, line3, line4, line5])
 
-    @staticmethod
-    def _format_dtg(track: Track) -> str:
-        """Format the track's timestamp as a Day-Time-Group (``DDHHMMZ``).
-
-        Args:
-            track: The track whose ``last_updated`` to format.
-
-        Returns:
-            A string like ``"311500Z"``, or ``"UNK"`` if no timestamp.
-        """
-        if track.last_updated is None:
-            return "UNK"
-        ts = track.last_updated
-        return f"{ts.day:02d}{ts.hour:02d}{ts.minute:02d}Z"

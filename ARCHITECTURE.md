@@ -101,7 +101,7 @@ flowchart LR
 | **Encapsulation** | `encapsulation/` | `EncapsulationDecoder` | UDP/TCP payload bytes | `list[RawJWord]` | Pluggable: SIMPLE, SISO-J, JREAP-C (plugin), Auto |
 | **Link 16** | `link16/` | `MessageDecoder` | `list[RawJWord]` | `list[Link16Message]` | Header parsing (public) + JSON-driven message decoding (injected at build/runtime) |
 | **Tracks** | `tracks/` | — | `Link16Message` | `Track` (stored) | In-memory, thread-safe, keyed by STN. Push via `on_update()`. |
-| **Output** | `output/` | `OutputFormatter` | `Track` | `str` | Pluggable: TACREP, 9-LINE, future formats |
+| **Output** | `output/` | `OutputFormatter` | `Track` | `str` | Pluggable: TACREP, 9-LINE, JSON, CSV, BULLSEYE |
 | **CLI** | `cli/` | — | User commands | Formatted reports | Pull-based: queries Tracks, uses Output to format |
 | **Network** | `network/` | `OutputSink` | `Track` (via callback) | Bytes over TCP/UDP | Push-based: uses Output to format, streams to remote endpoint |
 
@@ -123,7 +123,7 @@ graph TB
     encapsulation["<b>encapsulation/</b><br/>SIMPLE, SISO-J, JREAP-C, Auto"]
     link16["<b>link16/</b><br/>J-word parser + message decoders"]
     tracks["<b>tracks/</b><br/>TrackDatabase (on_update callbacks)"]
-    output["<b>output/</b><br/>TACREP, 9-LINE formatters"]
+    output["<b>output/</b><br/>TACREP, 9-LINE, JSON, CSV, BULLSEYE"]
     cli["<b>cli/</b><br/>InteractiveShell"]
     network["<b>network/</b><br/>NetworkSink (TCP/UDP)"]
 
@@ -215,7 +215,7 @@ flowchart TB
         B["Encapsulation decoders<br/>(SIMPLE, DIS/SISO-J)"]
         C["J-word header parser<br/>(bits 0-12: word format,<br/>label, sublabel, MLI)"]
         D["Track database<br/>(with on_update callbacks)"]
-        E["TACREP / 9-LINE formatters"]
+        E["Output formatters<br/>(TACREP, 9-LINE, JSON, CSV, BULLSEYE)"]
         F["CLI shell"]
         H["Network sink<br/>(TCP/UDP streaming)"]
         I["DefinitionDecoder engine<br/>(generic JSON-driven decoder)"]
@@ -414,9 +414,12 @@ link16-parser/
 │   │   └── database.py          ← in-memory track store
 │   ├── output/
 │   │   ├── __init__.py          ← "How to add an output format"
-│   │   ├── coords.py            ← decimal degrees ↔ military grid
-│   │   ├── tacrep.py            ← 5-line AIROP TACREP
-│   │   └── nineline.py          ← 9-line convenience format
+│   │   ├── coords.py            ← decimal degrees ↔ military grid + shared utils
+│   │   ├── tacrep_format.py     ← 5-line AIROP TACREP (formal military format)
+│   │   ├── nineline_format.py   ← 9-line convenience format (informal)
+│   │   ├── json_format.py       ← NDJSON (machine-readable, structured)
+│   │   ├── csv_format.py        ← CSV (machine-readable, flat columns)
+│   │   └── bullseye_format.py   ← Bullseye (bearing/distance from reference point)
 │   ├── network/
 │   │   ├── __init__.py          ← "How to add a network sink"
 │   │   └── sink.py              ← TCP/UDP streaming sink

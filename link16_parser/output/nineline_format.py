@@ -6,8 +6,8 @@ military standard — it's a convenience format for quick reference.
 
 from __future__ import annotations
 
-from link16_parser.core.types import Track
-from link16_parser.output.coords import position_to_lm
+from link16_parser.core.types import Track, TrackStatus
+from link16_parser.output.coords import format_dtg, position_to_lm
 
 
 class NineLineFormatter:
@@ -42,12 +42,16 @@ class NineLineFormatter:
         heading = f"{track.heading_deg:.0f}" if track.heading_deg is not None else "UNK"
         speed = f"{track.speed_kph:.0f}KPH" if track.speed_kph is not None else "UNK"
 
-        dtg = "UNK"
-        if track.last_updated:
-            ts = track.last_updated
-            dtg = f"{ts.day:02d}{ts.hour:02d}{ts.minute:02d}Z"
+        dtg = format_dtg(track.last_updated)
 
         identity = track.identity.value if track.identity else "UNK"
+
+        line9 = f"LINE 9: ID:{identity}"
+        if track.status != TrackStatus.ACTIVE:
+            line9 += f" STATUS:{track.status.value}"
+        for key, val in track.fields.items():
+            if isinstance(val, (str, int, float)):
+                line9 += f" {key.upper()}:{val}"
 
         lines = [
             f"LINE 1: {tn}",
@@ -58,6 +62,6 @@ class NineLineFormatter:
             f"LINE 6: {heading}",
             f"LINE 7: {speed}",
             f"LINE 8: {dtg}",
-            f"LINE 9: ID:{identity} MSGS:{track.message_count}",
+            line9,
         ]
         return "\n".join(lines)
