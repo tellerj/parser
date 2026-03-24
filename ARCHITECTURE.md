@@ -98,8 +98,8 @@ flowchart LR
 | Component | Package | Interface | Input | Output | Notes |
 |-----------|---------|-----------|-------|--------|-------|
 | **Ingestion** | `ingestion/` | `PacketSource` | PCAP bytes (file or pipe) | `(float, bytes)` tuples | Strips Ethernet/IP headers. Optional `--port` filter. |
-| **Encapsulation** | `encapsulation/` | `EncapsulationDecoder` | UDP/TCP payload bytes | `list[RawJWord]` | Pluggable: SIMPLE, SISO-J, JREAP-C, Auto |
-| **Link 16** | `link16/` | `MessageDecoder` | `list[RawJWord]` | `list[Link16Message]` | Header parsing (public) + message decoding (needs MIL-STD-6016) |
+| **Encapsulation** | `encapsulation/` | `EncapsulationDecoder` | UDP/TCP payload bytes | `list[RawJWord]` | Pluggable: SIMPLE, SISO-J, JREAP-C (plugin), Auto |
+| **Link 16** | `link16/` | `MessageDecoder` | `list[RawJWord]` | `list[Link16Message]` | Header parsing (public) + JSON-driven message decoding (injected at build/runtime) |
 | **Tracks** | `tracks/` | — | `Link16Message` | `Track` (stored) | In-memory, thread-safe, keyed by STN. Push via `on_update()`. |
 | **Output** | `output/` | `OutputFormatter` | `Track` | `str` | Pluggable: TACREP, 9-LINE, future formats |
 | **CLI** | `cli/` | — | User commands | Formatted reports | Pull-based: queries Tracks, uses Output to format |
@@ -201,15 +201,16 @@ is exhausted or on Ctrl-C.
 
 ---
 
-## The MIL-STD-6016 Boundary
+## The CUI Boundary
 
 This is the most important architectural line in the project. Everything
 above it works with publicly documented specs. Everything below it
-requires the restricted standard.
+requires restricted standards — but is injected from external sources,
+not built into this repo.
 
 ```mermaid
 flowchart TB
-    subgraph public["✅ PUBLIC — works today"]
+    subgraph public["PUBLIC — this repo"]
         A["PCAP reader<br/>(with port filter)"]
         B["Encapsulation decoders<br/>(SIMPLE, DIS/SISO-J)"]
         C["J-word header parser<br/>(bits 0-12: word format,<br/>label, sublabel, MLI)"]
@@ -217,17 +218,28 @@ flowchart TB
         E["TACREP / 9-LINE formatters"]
         F["CLI shell"]
         H["Network sink<br/>(TCP/UDP streaming)"]
+        I["DefinitionDecoder engine<br/>(generic JSON-driven decoder)"]
+        J["Encapsulation plugin loader<br/>(importlib-based injection)"]
     end
 
-    subgraph restricted["🔒 REQUIRES MIL-STD-6016"]
-        G["Message-specific field decoding<br/>(bits 13-69: lat, lon, alt,<br/>speed, heading, identity,<br/>platform type, callsign)"]
+    subgraph cui_6016["CUI — MIL-STD-6016 (separate repo)"]
+        G["JSON message definitions<br/>(bit-field layouts for J2.2,<br/>J3.2, etc.)"]
     end
 
-    C -->|"routes by<br/>(label, sublabel)"| G
-    G -->|"Link16Message<br/>with populated fields"| D
+    subgraph cui_3011["CUI — MIL-STD-3011 (separate repo)"]
+        K["JREAP-C decoder plugin<br/>(transport header parsing)"]
+    end
+
+    G -->|"injected via<br/>--definitions-dir"| I
+    I -->|"DefinitionDecoder[]"| C
+    C -->|"routes by<br/>(label, sublabel)"| I
+    I -->|"Link16Message<br/>with populated fields"| D
+    K -->|"injected via<br/>--encap-plugin"| J
+    J -->|"replaces stub in<br/>decoder registry"| B
 
     style public fill:#1a1a2e,stroke:#4ecca3,stroke-width:3px,color:#e0e0e0
-    style restricted fill:#1a1a2e,stroke:#e74c3c,stroke-width:3px,color:#e0e0e0
+    style cui_6016 fill:#1a1a2e,stroke:#e74c3c,stroke-width:3px,color:#e0e0e0
+    style cui_3011 fill:#1a1a2e,stroke:#e74c3c,stroke-width:3px,color:#e0e0e0
     style A fill:#2d3436,stroke:#4ecca3,color:#fff
     style B fill:#2d3436,stroke:#4ecca3,color:#fff
     style C fill:#2d3436,stroke:#4ecca3,color:#fff
@@ -235,12 +247,28 @@ flowchart TB
     style E fill:#2d3436,stroke:#4ecca3,color:#fff
     style F fill:#2d3436,stroke:#4ecca3,color:#fff
     style H fill:#2d3436,stroke:#4ecca3,color:#fff
+    style I fill:#2d3436,stroke:#4ecca3,color:#fff
+    style J fill:#2d3436,stroke:#4ecca3,color:#fff
     style G fill:#2d3436,stroke:#e74c3c,color:#fff
+    style K fill:#2d3436,stroke:#e74c3c,color:#fff
 ```
 
-**When MIL-STD-6016 becomes available**, the only files that change are
-the message decoders in `link16/messages/` (e.g. `j2_2.py`, `j3_2.py`).
-No other module is affected.
+Two CUI sources are injected at build or runtime:
+
+- **MIL-STD-6016** (message field layouts): JSON definition files loaded
+  via ``--definitions-dir`` or the ``LINK16_DEFINITIONS`` env var. The
+  generic ``DefinitionDecoder`` reads these and extracts bit-fields from
+  J-words. See ``docs/j-message-definition-transcription-guide_v2.md``.
+
+- **MIL-STD-3011** (JREAP-C encapsulation): A Python package providing
+  ``JreapCDecoder``, loaded via ``--encap-plugin`` or the
+  ``LINK16_ENCAP_PLUGIN`` env var. See
+  ``docs/mil-std-3011-jreap-c-plugin-guide.md`` and the template in
+  ``docs/jreap-c-plugin-template/``.
+
+No CUI data lives in this repo. Without injection, the parser runs but
+produces no decoded messages (6016) and returns empty results for
+JREAP-C packets (3011).
 
 ---
 
@@ -252,8 +280,9 @@ new implementations without modifying existing code (beyond wiring).
 | Extension Point | Protocol | Where to add | How to register |
 |----------------|----------|--------------|-----------------|
 | **Capture format** | — | `ingestion/` | New `*_reader.py` + magic bytes in `reader._auto_detect_stream()` |
-| **Encapsulation format** | `EncapsulationDecoder` | `encapsulation/` | New module + `_DECODER_REGISTRY` in `encapsulation/__init__.py` |
-| **Message type decoder** | `MessageDecoder` | `link16/messages/` | New module + `build_parser()` in `link16/__init__.py` |
+| **Encapsulation format** | `EncapsulationDecoder` | `encapsulation/` | New module + `DECODER_REGISTRY` in `encapsulation/__init__.py` |
+| **Encapsulation plugin** | `EncapsulationDecoder` | External package | `--encap-plugin` or `LINK16_ENCAP_PLUGIN` env var |
+| **Message type** | `MessageDecoder` | JSON definition file | `--definitions-dir` or `LINK16_DEFINITIONS` env var |
 | **Output format** | `OutputFormatter` | `output/` | New module + `build_formatters()` in `output/__init__.py` |
 | **Output sink** | `OutputSink` | `network/` | New module + wiring in `__main__.py` |
 
@@ -287,12 +316,13 @@ a message, it only overwrites fields that are non-None. A J2.2 PPLI
 previously set by a J3.2 Air Track. This means the track accumulates
 the best-known state from all message types.
 
-**Stubs over dead code.** The message decoders exist as real classes
-that return real `Link16Message` objects — they just don't populate
-the fields yet. This means the full pipeline runs end-to-end today
-(ingestion → parsing → track DB → TACREP output), and filling in the
-field decoding is a matter of writing bit-extraction code inside the
-existing `decode()` methods.
+**Data-driven message decoding.** Message field layouts (MIL-STD-6016)
+are defined in JSON files and loaded at runtime by a generic
+`DefinitionDecoder`. This separates the CUI bit-field data from the
+open-source tool — JSON files live in a separate repo and are injected
+at build or runtime. Adding a new message type means writing a JSON
+file, not Python code. A validation script (`scripts/validate_definitions.py`)
+catches errors before runtime.
 
 **Port filtering at ingestion.** The `--port` flag lets the PCAP reader
 skip irrelevant traffic before it even reaches the encapsulation layer.
@@ -353,7 +383,7 @@ from network sinks.
 ```
 link16-parser/
 ├── ARCHITECTURE.md              ← you are here
-├── pyproject.toml               ← package metadata, CLI entry point
+├── pyrightconfig.json           ← pyright strict mode config
 ├── link16_parser/
 │   ├── __init__.py
 │   ├── __main__.py              ← wiring + entry point
@@ -366,18 +396,20 @@ link16-parser/
 │   │   ├── pcap_reader.py       ← libpcap format stream reader
 │   │   └── pcapng_reader.py     ← pcapng format stream reader (stub)
 │   ├── encapsulation/
-│   │   ├── __init__.py          ← "How to add an encapsulation format"
+│   │   ├── __init__.py          ← decoder registry + plugin loader
 │   │   ├── simple.py            ← STANAG 5602 (fully implemented)
 │   │   ├── siso_j.py            ← DIS Signal PDU (fully implemented)
-│   │   ├── jreap_c.py           ← MIL-STD-3011 (stub)
+│   │   ├── jreap_c.py           ← MIL-STD-3011 (stub — replaced by plugin at runtime)
 │   │   └── detect.py            ← auto-detection heuristic
 │   ├── link16/
+│   │   ├── __init__.py          ← build_parser() + definition loading
 │   │   ├── parser.py            ← J-word header parsing + decoder registry
+│   │   ├── definitions/         ← built-in definitions dir (populated at build time)
 │   │   └── messages/
-│   │       ├── __init__.py      ← "How to add a message decoder"
-│   │       ├── j2_2.py          ← J2.2 Air PPLI (stub)
-│   │       ├── j3_2.py          ← J3.2 Air Track (stub)
-│   │       └── j28_2.py         ← J28.2 Free Text (stub)
+│   │       ├── __init__.py
+│   │       ├── definition_decoder.py  ← generic JSON-driven field decoder
+│   │       ├── loader.py              ← JSON loading + directory resolution
+│   │       └── schema.py             ← JSON definition validation
 │   ├── tracks/
 │   │   └── database.py          ← in-memory track store
 │   ├── output/
@@ -390,6 +422,16 @@ link16-parser/
 │   │   └── sink.py              ← TCP/UDP streaming sink
 │   └── cli/
 │       └── shell.py             ← interactive CLI shell
+├── scripts/
+│   └── validate_definitions.py  ← standalone JSON definition validator
+├── docs/
+│   ├── j-message-definition-transcription-guide_v2.md
+│   ├── mil-std-3011-jreap-c-plugin-guide.md
+│   └── jreap-c-plugin-template/ ← copy-and-fill template for JREAP-C decoder
 └── tests/
-    └── __init__.py
+    ├── fixtures/                ← test JSON definitions (fabricated, non-CUI)
+    ├── test_definition_decoder.py
+    ├── test_definition_loader.py
+    ├── test_schema_validation.py
+    └── ...
 ```

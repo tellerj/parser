@@ -56,7 +56,7 @@ Or via environment variable::
     export LINK16_ENCAP_PLUGIN=jreap_decoder.decoder
 
 The module must contain a class named ``JreapCDecoder`` matching the
-``EncapsulationDecoder`` protocol. See ``docs/jreap-c-plugin-guide.md``.
+``EncapsulationDecoder`` protocol. See ``docs/mil-std-3011-jreap-c-plugin-guide.md``.
 """
 
 from __future__ import annotations
