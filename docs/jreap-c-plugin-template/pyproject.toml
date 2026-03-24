@@ -1,0 +1,20 @@
+[project]
+name = "jreap-decoder"
+version = "0.1.0"
+description = "JREAP-C (MIL-STD-3011) encapsulation decoder plugin for link16-parser"
+requires-python = ">=3.12"
+dependencies = ["link16-parser"]
+
+[project.optional-dependencies]
+dev = ["pytest", "pyright"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"

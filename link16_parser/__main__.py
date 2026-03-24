@@ -27,7 +27,7 @@ import threading
 
 from link16_parser.cli import InteractiveShell
 from link16_parser.core import EncapsulationDecoder, PacketSource
-from link16_parser.encapsulation import ENCAP_CHOICES, build_decoder
+from link16_parser.encapsulation import ENCAP_CHOICES, build_decoder, register_encap_plugin
 from link16_parser.ingestion import build_source
 from link16_parser.link16 import JWordParser, build_parser
 from link16_parser.network import NetworkSink
@@ -109,6 +109,13 @@ note:
         default=None,
         help="Path to directory of JSON message definitions (MIL-STD-6016 field layouts)",
     )
+    p.add_argument(
+        "--encap-plugin",
+        default=None,
+        help="Dotted Python module path to an external JREAP-C decoder "
+             "(e.g. 'jreap_decoder.decoder'). Also settable via "
+             "LINK16_ENCAP_PLUGIN env var.",
+    )
     p.add_argument("--originator", default="L16-PARSER", help="TACREP originator field")
     p.add_argument("--classification", default="UNCLAS", help="Classification marking")
     p.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
@@ -187,6 +194,7 @@ def main() -> None:
 
     # Build pipeline components
     source = build_source(file=args.file, pipe=args.pipe, port_filter=args.port)
+    register_encap_plugin(cli_arg=args.encap_plugin)
     encap_decoder = build_decoder(args.encap)
     jword_parser = build_parser(definitions_dir=args.definitions_dir)
     track_db = TrackDatabase()
