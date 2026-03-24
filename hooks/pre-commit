@@ -3,12 +3,15 @@
 
 set -euo pipefail
 
+# Ensure ~/.local/bin is on PATH (pip user installs).
+export PATH="$HOME/.local/bin:$PATH"
+
 # Run from the repo root so config files are found.
 cd "$(git rev-parse --show-toplevel)"
 
 # --- Tests ---
 echo "pre-commit: running tests..."
-if ! python -m pytest tests/ -q --tb=short 2>&1; then
+if ! python3 -m pytest tests/ -q --tb=short 2>&1; then
     echo ""
     echo "pre-commit: tests failed. Fix them before committing."
     exit 1

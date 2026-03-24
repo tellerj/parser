@@ -17,7 +17,7 @@ from dataclasses import replace
 from typing import Iterator
 
 from link16_parser.core.interfaces import TrackListener
-from link16_parser.core.types import Link16Message, Track
+from link16_parser.core.types import Link16Message, PlatformId, Position, Track
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +78,25 @@ class TrackDatabase:
 
             # Merge fields — only update if the message carries a value
             if message.position is not None:
-                track.position = message.position
+                if track.position is not None:
+                    track.position = Position(
+                        lat=message.position.lat,
+                        lon=message.position.lon,
+                        alt_m=message.position.alt_m if message.position.alt_m is not None else track.position.alt_m,
+                    )
+                else:
+                    track.position = message.position
             if message.identity is not None:
                 track.identity = message.identity
             if message.platform is not None:
-                track.platform = message.platform
+                if track.platform is not None:
+                    track.platform = PlatformId(
+                        generic_type=message.platform.generic_type if message.platform.generic_type is not None else track.platform.generic_type,
+                        specific_type=message.platform.specific_type if message.platform.specific_type is not None else track.platform.specific_type,
+                        nationality=message.platform.nationality if message.platform.nationality is not None else track.platform.nationality,
+                    )
+                else:
+                    track.platform = message.platform
             if message.callsign is not None:
                 track.callsign = message.callsign
             if message.heading_deg is not None:
@@ -96,10 +110,12 @@ class TrackDatabase:
             track.last_updated = message.timestamp
             track.message_count += 1
 
-            # Notify listeners
+            # Notify listeners — snapshot so listeners can't mutate the
+            # live track or see later mutations through a stashed reference.
+            snapshot = replace(track)
             for listener in self._listeners:
                 try:
-                    listener(track, message)
+                    listener(snapshot, message)
                 except Exception:
                     listener_name = getattr(listener, "__qualname__", repr(listener))
                     logger.exception(
@@ -108,7 +124,7 @@ class TrackDatabase:
                         listener_name, track.stn, message.msg_type,
                     )
 
-            return replace(track)
+            return snapshot
 
     def get_by_stn(self, stn: int) -> Track | None:
         """Look up a track by Source Track Number.
