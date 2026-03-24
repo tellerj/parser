@@ -5,7 +5,7 @@ development/test encapsulation since its format is entirely public.
 
 Packet layout:
   - SIMPLE Header (16 bytes): sync 0x49 0x36, length, seq, nodes, type, checksum
-  - Link 16 Subheader (18 bytes): subtype, network, NPG, STN, word count, etc.
+  - Link 16 Subheader (14 bytes parsed of 18): subtype, network, NPG, STN, word count
   - J-words: 10 bytes each (80 bits), little-endian
 """
 

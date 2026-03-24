@@ -31,9 +31,12 @@ Not supported:
 
 from __future__ import annotations
 
+import logging
 import struct
 import sys
 from typing import BinaryIO, Iterator
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -85,16 +88,22 @@ def read_exact(stream: BinaryIO, n: int) -> bytes | None:
     return bytes(buf)
 
 
-def parse_frame(frame: bytes) -> tuple[bytes, int, int] | None:
+def parse_frame(
+    frame: bytes,
+    port_filter: int | None = None,
+) -> tuple[bytes, int, int] | None:
     """Parse an Ethernet/IP/UDP|TCP frame.
 
     Args:
         frame: A complete captured Ethernet frame (including Ethernet header).
+        port_filter: If set, only return a result when either the source
+            or destination port matches. ``None`` means no filtering.
 
     Returns:
         A tuple of ``(payload, src_port, dst_port)`` where *payload* is the
         transport-layer payload bytes, or ``None`` if the frame is not
-        Ethernet II / IPv4 / UDP|TCP.
+        Ethernet II / IPv4 / UDP|TCP, has an empty payload, or does not
+        match the port filter.
     """
     if len(frame) < ETHERNET_HEADER_LEN + IP_HEADER_MIN_LEN:
         return None
@@ -118,7 +127,6 @@ def parse_frame(frame: bytes) -> tuple[bytes, int, int] | None:
             return None
         src_port, dst_port = struct.unpack_from("!HH", frame, transport_offset)
         payload = frame[transport_offset + UDP_HEADER_LEN:]
-        return payload, src_port, dst_port
 
     elif protocol == 6:  # TCP
         if len(frame) < transport_offset + TCP_HEADER_MIN_LEN:
@@ -126,9 +134,18 @@ def parse_frame(frame: bytes) -> tuple[bytes, int, int] | None:
         src_port, dst_port = struct.unpack_from("!HH", frame, transport_offset)
         tcp_data_offset = (frame[transport_offset + 12] >> 4) * 4
         payload = frame[transport_offset + tcp_data_offset:]
-        return payload, src_port, dst_port
 
-    return None
+    else:
+        return None
+
+    if len(payload) == 0:
+        return None
+
+    if port_filter is not None:
+        if src_port != port_filter and dst_port != port_filter:
+            return None
+
+    return payload, src_port, dst_port
 
 
 # ---------------------------------------------------------------------------

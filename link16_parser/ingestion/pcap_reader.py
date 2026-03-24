@@ -12,6 +12,7 @@ Format reference: https://wiki.wireshark.org/Development/LibpcapFileFormat
 
 from __future__ import annotations
 
+import logging
 import struct
 from typing import BinaryIO, Iterator
 
@@ -20,6 +21,8 @@ from link16_parser.ingestion.reader import (
     parse_frame,
     read_exact,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def read_pcap_stream(
@@ -101,11 +104,14 @@ def read_pcap_stream(
         )
 
     # Read packet records
+    packets_read = 0
+    packets_yielded = 0
+
     while True:
         # Packet header: 16 bytes (ts_sec, ts_frac, incl_len, orig_len)
         pkt_header = read_exact(stream, 16)
         if pkt_header is None:
-            return  # End of stream
+            break  # End of stream
 
         ts_sec, ts_frac, incl_len, _orig_len = struct.unpack(
             f"{endian}IIII", pkt_header
@@ -114,19 +120,31 @@ def read_pcap_stream(
 
         frame = read_exact(stream, incl_len)
         if frame is None:
-            return
+            break
 
-        parsed = parse_frame(frame)
+        packets_read += 1
+
+        parsed = parse_frame(frame, port_filter)
         if parsed is None:
             continue
 
-        payload, src_port, dst_port = parsed
-        if len(payload) == 0:
-            continue
-
-        # Apply port filter if configured
-        if port_filter is not None:
-            if src_port != port_filter and dst_port != port_filter:
-                continue
-
+        payload = parsed[0]
+        packets_yielded += 1
         yield (timestamp, payload)
+
+    logger.info(
+        "PCAP stream complete: %d packets read, %d matched filter",
+        packets_read, packets_yielded,
+    )
+    if packets_read > 0 and packets_yielded == 0:
+        if port_filter is not None:
+            logger.warning(
+                "No packets matched port filter %d — check --port value",
+                port_filter,
+            )
+        else:
+            logger.warning(
+                "No valid UDP/TCP IPv4 packets found in capture "
+                "(all %d frames were filtered out)",
+                packets_read,
+            )

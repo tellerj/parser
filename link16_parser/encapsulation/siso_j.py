@@ -93,7 +93,9 @@ class SisoJDecoder:
         if msg_type_id == MSG_TYPE_JTIDS_HEADER_MESSAGES:
             if len(payload) < data_offset + JTIDS_HEADER_WORD_SIZE:
                 return []
-            # STN is bits 4-18 of the 48-bit header word (big-endian in v2.0)
+            # STN is bits 4-18 of the 48-bit header word (big-endian in v2.0).
+            # The header word is 6 bytes; pad to 8 for big-endian uint64
+            # unpack, then shift right 16 to discard the padding.
             header_word = struct.unpack_from("!Q", payload + b"\x00\x00", data_offset)[0] >> 16
             stn = (header_word >> 4) & 0x7FFF
             j_words_start = data_offset + JTIDS_HEADER_WORD_SIZE
