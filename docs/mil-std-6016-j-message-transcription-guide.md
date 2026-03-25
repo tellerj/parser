@@ -27,6 +27,7 @@ See the decoder priority analysis document for full rationale.
 
 - The MIL-STD-6016 PDF (Section 5), open to the message type you are transcribing
 - A text editor (VS Code, Notepad++, etc.)
+- A copy of the [template](j-message-definition-template.jsonc) — start from this rather than a blank file
 - The validation tool (instructions at the end)
 
 ---
@@ -138,7 +139,7 @@ Find the message in the PDF using the Applicability Table for its family. Note t
 - **Name** — the full name from the Message Summary title (e.g., "J3.2 Air Track")
 - **Word count** — from the Applicability Table, how many words does this sublabel have?
 
-Create a new file named after the message type, e.g., `j3_2.json`, and start with:
+Copy the [template](j-message-definition-template.jsonc) to a new file named after the message type, e.g., `j3_2.json`. Fill in the header:
 
 ```json
 {
@@ -149,6 +150,8 @@ Create a new file named after the message type, e.g., `j3_2.json`, and start wit
   ]
 }
 ```
+
+The template includes pre-structured blocks for common fields (identity, track number, lat/lon, altitude, heading, speed, etc.) with the correct `type` and `maps_to` already set. Delete the blocks your message doesn't have, then fill in every value marked `TODO` from the Word Description table. See the comments in the template for full instructions.
 
 ---
 

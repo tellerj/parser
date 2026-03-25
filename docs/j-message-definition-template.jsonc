@@ -1,0 +1,247 @@
+// ==========================================================================
+// Link 16 Message Definition Template
+//
+// INSTRUCTIONS:
+//   1. Save a copy as  jX_Y.json  (e.g. j3_2.json)
+//   2. Fill in the 3 header values (label, sublabel, name)
+//   3. Delete field blocks that don't appear in your Word Description table
+//   4. Fill in every remaining value marked TODO from the PDF
+//   5. Copy-paste from the BLANK STUBS section at the bottom to add fields
+//   6. Strip ALL comments — final file must be valid JSON
+//      VS Code: Ctrl+H, regex mode, find  ^\s*//.*\n  replace with nothing
+//   7. Run the validator
+//
+// REMINDERS:
+//   - start_bit = pdf_bit_position − 13   (if your PDF numbers from 13)
+//   - start_bit + length must not exceed 57
+//   - Skip SPARE / DISUSED rows — don't create entries for them
+//   - Enum keys must be STRINGS; convert octal PDF values to decimal
+// ==========================================================================
+{
+  "label": "TODO",
+  "sublabel": "TODO",
+  "name": "TODO JX.Y Message Name from PDF",
+  "fields": [
+
+    // ── WORD 0 (Initial Word) ────────────────────────────────────────────
+    //
+    // Delete any blocks your message doesn't have.
+    // All values must come from the Word Description table in the PDF.
+
+    // Track quality
+    {
+      "name": "track_quality",
+      "word": 0,
+      "start_bit": "TODO",
+      "length": "TODO",
+      "type": "integer",
+      "maps_to": "fields.track_quality"
+    },
+
+    // Identity / IFF — verify length and code values against your PDF
+    {
+      "name": "identity",
+      "word": 0,
+      "start_bit": "TODO",
+      "length": "TODO",
+      "type": "enum",
+      "values": {
+        "TODO": "TODO"
+      },
+      "maps_to": "identity"
+    },
+
+    // Track number
+    {
+      "name": "track_number",
+      "word": 0,
+      "start_bit": "TODO",
+      "length": "TODO",
+      "type": "track_num",
+      "maps_to": "track_number"
+    },
+
+    // Platform generic type — fill values from PDF code table
+    {
+      "name": "platform_generic",
+      "word": 0,
+      "start_bit": "TODO",
+      "length": "TODO",
+      "type": "enum",
+      "values": {
+        "TODO": "TODO"
+      },
+      "maps_to": "platform.generic_type"
+    },
+
+    // Platform specific type
+    {
+      "name": "platform_specific",
+      "word": 0,
+      "start_bit": "TODO",
+      "length": "TODO",
+      "type": "enum",
+      "values": {
+        "TODO": "TODO"
+      },
+      "maps_to": "platform.specific_type"
+    },
+
+    // Nationality
+    {
+      "name": "nationality",
+      "word": 0,
+      "start_bit": "TODO",
+      "length": "TODO",
+      "type": "enum",
+      "values": {
+        "TODO": "TODO"
+      },
+      "maps_to": "platform.nationality"
+    },
+
+    // Callsign
+    {
+      "name": "callsign",
+      "word": 0,
+      "start_bit": "TODO",
+      "length": "TODO",
+      "type": "string",
+      "maps_to": "callsign"
+    },
+
+    // Status / bit flags
+    {
+      "name": "status_flags",
+      "word": 0,
+      "start_bit": "TODO",
+      "length": "TODO",
+      "type": "flags",
+      "maps_to": "fields.status_flags"
+    },
+
+    // ── WORD 1 (Continuation 1) ──────────────────────────────────────────
+
+    // Latitude — get scale and offset from the RESOLUTION column in the PDF
+    {
+      "name": "latitude",
+      "word": 1,
+      "start_bit": "TODO",
+      "length": "TODO",
+      "type": "scaled",
+      "scale": "TODO",
+      "offset": "TODO",
+      "maps_to": "position.lat"
+    },
+
+    // Longitude — get scale and offset from the RESOLUTION column in the PDF
+    {
+      "name": "longitude",
+      "word": 1,
+      "start_bit": "TODO",
+      "length": "TODO",
+      "type": "scaled",
+      "scale": "TODO",
+      "offset": "TODO",
+      "maps_to": "position.lon"
+    },
+
+    // ── WORD 2 (Continuation 2) ──────────────────────────────────────────
+
+    // Altitude
+    {
+      "name": "altitude",
+      "word": 2,
+      "start_bit": "TODO",
+      "length": "TODO",
+      "type": "scaled",
+      "scale": "TODO",
+      "offset": "TODO",
+      "maps_to": "position.alt_m"
+    },
+
+    // Heading
+    {
+      "name": "heading",
+      "word": 2,
+      "start_bit": "TODO",
+      "length": "TODO",
+      "type": "scaled",
+      "scale": "TODO",
+      "offset": "TODO",
+      "maps_to": "heading_deg"
+    },
+
+    // Speed
+    {
+      "name": "speed",
+      "word": 2,
+      "start_bit": "TODO",
+      "length": "TODO",
+      "type": "scaled",
+      "scale": "TODO",
+      "offset": "TODO",
+      "maps_to": "speed_kph"
+    }
+
+    // ── BLANK STUBS ──────────────────────────────────────────────────────
+    // Copy-paste these when you need additional fields beyond the above.
+    // Set word, start_bit, length, and fill values from the PDF.
+    //
+    // Integer:
+    // {
+    //   "name": "TODO",
+    //   "word": "TODO",
+    //   "start_bit": "TODO",
+    //   "length": "TODO",
+    //   "type": "integer",
+    //   "maps_to": "fields.TODO"
+    // }
+    //
+    // Scaled:
+    // {
+    //   "name": "TODO",
+    //   "word": "TODO",
+    //   "start_bit": "TODO",
+    //   "length": "TODO",
+    //   "type": "scaled",
+    //   "scale": "TODO",
+    //   "offset": "TODO",
+    //   "maps_to": "fields.TODO"
+    // }
+    //
+    // Enum:
+    // {
+    //   "name": "TODO",
+    //   "word": "TODO",
+    //   "start_bit": "TODO",
+    //   "length": "TODO",
+    //   "type": "enum",
+    //   "values": {
+    //     "0": "TODO",
+    //     "1": "TODO"
+    //   },
+    //   "maps_to": "fields.TODO"
+    // }
+    //
+    // Flags:
+    // {
+    //   "name": "TODO",
+    //   "word": "TODO",
+    //   "start_bit": "TODO",
+    //   "length": "TODO",
+    //   "type": "flags",
+    //   "maps_to": "fields.TODO"
+    // }
+    //
+    // String:
+    // {
+    //   "name": "TODO",
+    //   "word": "TODO",
+    //   "start_bit": "TODO",
+    //   "length": "TODO",
+    //   "type": "string",
+    //   "maps_to": "fields.TODO"
+    // }
+  ]
+}
