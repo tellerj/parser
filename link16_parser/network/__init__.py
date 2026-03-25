@@ -29,7 +29,7 @@ How to add a new network sink
                # Close the socket. Must be idempotent.
                ...
 
-           def on_track_update(self, track: Track, message: Link16Message) -> None:
+           def on_track_update(self, track: Track, message: Link16Message | None) -> None:
                # Format and send. Called inside the DB lock — be fast.
                # For heavy work, enqueue and return immediately.
                ...

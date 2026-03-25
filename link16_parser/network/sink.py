@@ -7,7 +7,6 @@ blocking the ingestion pipeline.
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 import queue
 import socket
@@ -21,6 +20,11 @@ logger = logging.getLogger(__name__)
 
 # Only log queue-full warnings at most once per this many seconds
 _QUEUE_FULL_LOG_INTERVAL = 10.0
+
+# Reconnection backoff parameters (seconds)
+_RECONNECT_INITIAL = 1.0
+_RECONNECT_MAX = 30.0
+_RECONNECT_MULTIPLIER = 2.0
 
 
 class NetworkSink:
@@ -151,9 +155,10 @@ class NetworkSink:
         if self._formatter is None:
             return
 
-        snapshot = dataclasses.replace(track)
+        # track is already a snapshot (deep-enough copy) from
+        # TrackDatabase._notify_listeners — no need to copy again.
         try:
-            self._queue.put_nowait((snapshot, message))
+            self._queue.put_nowait((track, message))
         except queue.Full:
             self._drop_count += 1
             now = time.monotonic()
@@ -164,6 +169,48 @@ class NetworkSink:
                     self.name, self._drop_count,
                 )
                 self._last_drop_log = now
+
+    def _reconnect(self) -> bool:
+        """Attempt to re-establish a TCP connection with exponential backoff.
+
+        Returns:
+            True if reconnection succeeded, False if shutdown was
+            requested during the backoff loop.
+        """
+        delay = _RECONNECT_INITIAL
+        while self._running:
+            # Close the broken socket before retrying
+            if self._socket is not None:
+                try:
+                    self._socket.close()
+                except OSError:
+                    pass
+                self._socket = None
+
+            logger.info(
+                "Network sink %s reconnecting in %.0fs...", self.name, delay,
+            )
+            # Sleep in small increments so we notice shutdown quickly
+            deadline = time.monotonic() + delay
+            while time.monotonic() < deadline:
+                if not self._running:
+                    return False
+                time.sleep(min(0.5, deadline - time.monotonic()))
+
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                sock.connect((self._host, self._port))
+                self._socket = sock
+                logger.info("Network sink %s reconnected", self.name)
+                return True
+            except OSError as exc:
+                sock.close()
+                logger.warning(
+                    "Network sink %s reconnect failed: %s", self.name, exc,
+                )
+                delay = min(delay * _RECONNECT_MULTIPLIER, _RECONNECT_MAX)
+
+        return False
 
     def _sender_loop(self) -> None:
         """Background thread: drain the queue, format, and send over the socket."""
@@ -183,9 +230,22 @@ class NetworkSink:
                 continue
 
             track, _message = item
+
+            # Format the track — catch any formatter error so a single
+            # bad track doesn't kill the entire output stream.
+            try:
+                formatted = self._formatter.format(track)
+            except Exception as exc:
+                logger.error(
+                    "Network sink %s — formatter error for STN %d: %s",
+                    self.name, track.stn, exc,
+                )
+                continue
+
             try:
                 # If the formatter has a header() method (e.g. CSV),
-                # emit it once before the first data row.
+                # emit it once before the first data row (and again
+                # after each TCP reconnection).
                 if not header_sent:
                     header_fn = getattr(self._formatter, "header", None)
                     if header_fn is not None:
@@ -193,7 +253,6 @@ class NetworkSink:
                         self._socket.sendall(header_data)
                     header_sent = True
 
-                formatted = self._formatter.format(track)
                 data = (formatted + "\n").encode("utf-8")
                 if self._protocol == "tcp":
                     self._socket.sendall(data)
@@ -201,12 +260,15 @@ class NetworkSink:
                     self._socket.sendto(data, (self._host, self._port))
             except OSError as exc:
                 logger.error(
-                    "Network sink %s failed — send error: %s. "
-                    "Output streaming has stopped. Remaining queued updates "
-                    "will be lost. Check that the remote endpoint is still "
-                    "reachable.",
-                    self.name, exc,
+                    "Network sink %s send error: %s", self.name, exc,
                 )
-                break
+                if self._protocol == "udp":
+                    # UDP is connectionless — a single sendto failure
+                    # is not fatal, just skip this message.
+                    continue
+                # TCP: attempt reconnection with backoff
+                header_sent = False
+                if not self._reconnect():
+                    break
 
         logger.info("Network sink %s sender thread exiting", self.name)

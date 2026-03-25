@@ -200,7 +200,10 @@ The system uses up to four threads:
   Sole interactive reader.
 - **NetworkSink sender thread** (daemon, optional): drains a queue of
   formatted messages and sends them over TCP/UDP. Activated only when
-  `--output-host` and `--output-port` are specified.
+  `--output-host` and `--output-port` are specified. On TCP send failure,
+  reconnects with exponential backoff (1s → 30s cap) while the queue
+  continues buffering updates. Formatter errors are logged and skipped
+  without killing the stream.
 
 All threads share the `TrackDatabase`, protected by a single
 `threading.Lock`. The `on_track_update()` callback runs inside the DB
