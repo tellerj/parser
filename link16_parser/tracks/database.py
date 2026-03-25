@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections import deque
 from dataclasses import replace
+from datetime import datetime, timezone
 from typing import Iterator
 
 from link16_parser.core.interfaces import TrackListener
-from link16_parser.core.types import Link16Message, PlatformId, Position, Track
+from link16_parser.core.types import Link16Message, PlatformId, Position, Track, TrackStatus
 
 logger = logging.getLogger(__name__)
 
@@ -45,20 +47,34 @@ class TrackDatabase:
     dispatched to a queue or separate thread.
     """
 
-    def __init__(self) -> None:
+    _MAX_HISTORY = 50  # per-track message history ring buffer size
+
+    def __init__(
+        self,
+        stale_ttl: float = 120.0,
+        drop_ttl: float = 300.0,
+        sweep_interval: float = 30.0,
+    ) -> None:
         self._tracks: dict[int, Track] = {}  # keyed by STN
+        self._history: dict[int, deque[Link16Message]] = {}
         self._lock = threading.Lock()
         self._listeners: list[TrackListener] = []
+        self._stale_ttl = stale_ttl
+        self._drop_ttl = drop_ttl
+        self._sweep_interval = sweep_interval
+        self._aging_thread: threading.Thread | None = None
+        self._aging_stop = threading.Event()
 
     def on_update(self, listener: TrackListener) -> None:
         """Register a callback invoked after every track update.
 
         The callback receives the updated ``Track`` and the
-        ``Link16Message`` that triggered the update. It is called
-        inside the database lock — keep it fast and non-blocking.
+        ``Link16Message`` that triggered the update (or ``None`` for
+        aging transitions). It is called inside the database lock —
+        keep it fast and non-blocking.
 
         Args:
-            listener: A callable ``(Track, Link16Message) -> None``.
+            listener: A callable ``(Track, Link16Message | None) -> None``.
         """
         with self._lock:
             self._listeners.append(listener)
@@ -125,19 +141,19 @@ class TrackDatabase:
             track.last_updated = message.timestamp
             track.message_count += 1
 
+            # Resurrect stale/dropped tracks on new message
+            if track.status != TrackStatus.ACTIVE:
+                track.status = TrackStatus.ACTIVE
+
+            # Append to per-track message history (bounded ring buffer)
+            if message.stn not in self._history:
+                self._history[message.stn] = deque(maxlen=self._MAX_HISTORY)
+            self._history[message.stn].append(message)
+
             # Notify listeners — snapshot so listeners can't mutate the
             # live track or see later mutations through a stashed reference.
             snapshot = _snapshot(track)
-            for listener in self._listeners:
-                try:
-                    listener(snapshot, message)
-                except Exception:
-                    listener_name = getattr(listener, "__qualname__", repr(listener))
-                    logger.exception(
-                        "Track update listener '%s' failed while processing "
-                        "STN %d (%s message)",
-                        listener_name, track.stn, message.msg_type,
-                    )
+            self._notify_listeners(snapshot, message)
 
             return snapshot
 
@@ -242,6 +258,119 @@ class TrackDatabase:
         updated.sort(key=lambda t: t.last_updated, reverse=True)  # type: ignore[arg-type]
         never_updated.sort(key=lambda t: t.stn)
         return updated + never_updated
+
+    def message_history(self, stn: int) -> list[Link16Message]:
+        """Return recent message history for a track (newest last).
+
+        Returns up to the last ``_MAX_HISTORY`` messages. The list is a
+        copy — safe to iterate outside the lock.
+
+        Args:
+            stn: The Source Track Number to query.
+
+        Returns:
+            A list of ``Link16Message`` objects, oldest first. Empty list
+            if the STN has no history.
+        """
+        with self._lock:
+            buf = self._history.get(stn)
+            return list(buf) if buf is not None else []
+
+    # ------------------------------------------------------------------
+    # Track aging
+    # ------------------------------------------------------------------
+
+    @property
+    def stale_ttl(self) -> float:
+        """Seconds without an update before a track transitions to STALE."""
+        return self._stale_ttl
+
+    @stale_ttl.setter
+    def stale_ttl(self, value: float) -> None:
+        self._stale_ttl = value
+
+    @property
+    def drop_ttl(self) -> float:
+        """Seconds after becoming STALE before transitioning to DROPPED."""
+        return self._drop_ttl
+
+    @drop_ttl.setter
+    def drop_ttl(self, value: float) -> None:
+        self._drop_ttl = value
+
+    def start_aging(self) -> None:
+        """Start the background aging sweep thread (daemon).
+
+        The sweep runs every ``sweep_interval`` seconds and transitions
+        tracks: ACTIVE -> STALE (after ``stale_ttl``) and STALE -> DROPPED
+        (after ``stale_ttl + drop_ttl`` total silence).
+        """
+        if self._aging_thread is not None:
+            return
+        self._aging_stop.clear()
+        self._aging_thread = threading.Thread(
+            target=self._aging_loop, daemon=True, name="track-aging",
+        )
+        self._aging_thread.start()
+
+    def stop_aging(self) -> None:
+        """Stop the aging sweep thread."""
+        self._aging_stop.set()
+        if self._aging_thread is not None:
+            self._aging_thread.join(timeout=2.0)
+            self._aging_thread = None
+
+    def _aging_loop(self) -> None:
+        """Periodically sweep tracks for aging transitions."""
+        while not self._aging_stop.wait(self._sweep_interval):
+            self.sweep_aging()
+
+    def sweep_aging(self) -> None:
+        """Single aging sweep — transitions stale/dropped tracks.
+
+        Exposed as a separate method so tests can call it directly
+        without starting the background thread.
+        """
+        now = datetime.now(timezone.utc)
+        transitions: list[Track] = []
+
+        with self._lock:
+            for track in self._tracks.values():
+                if track.last_updated is None:
+                    continue
+                age = (now - track.last_updated).total_seconds()
+
+                new_status: TrackStatus | None = None
+                if track.status == TrackStatus.ACTIVE and age > self._stale_ttl:
+                    new_status = TrackStatus.STALE
+                elif track.status == TrackStatus.STALE and age > (self._stale_ttl + self._drop_ttl):
+                    new_status = TrackStatus.DROPPED
+
+                if new_status is not None:
+                    track.status = new_status
+                    transitions.append(_snapshot(track))
+
+            for snapshot in transitions:
+                self._notify_listeners(snapshot, None)
+
+            # Clean up history for dropped tracks
+            for snapshot in transitions:
+                if snapshot.status == TrackStatus.DROPPED:
+                    self._history.pop(snapshot.stn, None)
+
+    def _notify_listeners(
+        self, snapshot: Track, message: Link16Message | None,
+    ) -> None:
+        """Call all registered listeners, logging and swallowing exceptions."""
+        for listener in self._listeners:
+            try:
+                listener(snapshot, message)
+            except Exception:
+                listener_name = getattr(listener, "__qualname__", repr(listener))
+                logger.exception(
+                    "Listener '%s' failed for STN %d",
+                    listener_name, snapshot.stn,
+                )
 
     def __len__(self) -> int:
         with self._lock:

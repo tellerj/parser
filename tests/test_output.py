@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from link16_parser.core.interfaces import OutputFormatter
-from link16_parser.core.types import Identity, PlatformId, Position, Track, TrackStatus
+from link16_parser.core.types import Identity, Link16Message, PlatformId, Position, Track, TrackStatus
 from link16_parser.output.coords import (
     decimal_to_military_lat,
     decimal_to_military_lon,
@@ -686,6 +686,52 @@ class TestBullseyeFormatter:
 
 
 # ---------------------------------------------------------------------------
+# Shell helpers
+# ---------------------------------------------------------------------------
+
+
+def _run_shell(
+    commands: list[str],
+    tracks: list[Track] | None = None,
+    formatters: dict[str, OutputFormatter] | None = None,
+) -> str:
+    """Run shell commands against an in-memory DB and return captured output."""
+    import io
+    from link16_parser.cli.shell import InteractiveShell
+    from link16_parser.output import build_formatters
+    from link16_parser.tracks.database import TrackDatabase
+
+    db = TrackDatabase()
+    if tracks:
+        for t in tracks:
+            msg = Link16Message(
+                stn=t.stn,
+                msg_type="J3.2",
+                timestamp=t.last_updated or datetime(2025, 1, 1, tzinfo=timezone.utc),
+                position=t.position,
+                identity=t.identity,
+                platform=t.platform,
+                callsign=t.callsign,
+                heading_deg=t.heading_deg,
+                speed_kph=t.speed_kph,
+                track_number=t.track_number,
+                fields=dict(t.fields) if t.fields else {},
+            )
+            db.update(msg)
+
+    if formatters is None:
+        formatters = build_formatters()
+    inp = io.StringIO("\n".join(commands) + "\n")
+    out = io.StringIO()
+    shell = InteractiveShell(
+        track_db=db, formatters=formatters,
+        input_stream=inp, output_stream=out,
+    )
+    shell.run()
+    return out.getvalue()
+
+
+# ---------------------------------------------------------------------------
 # Shell — bullseye interactive flow
 # ---------------------------------------------------------------------------
 
@@ -693,32 +739,13 @@ class TestBullseyeFormatter:
 class TestShellBullseyeFlow:
     """Tests for the interactive bullseye UX in the CLI shell."""
 
-    @staticmethod
-    def _run_shell_commands(commands: list[str], formatters: dict[str, OutputFormatter] | None = None) -> str:
-        import io
-        from link16_parser.cli.shell import InteractiveShell
-        from link16_parser.output import build_formatters
-        from link16_parser.tracks.database import TrackDatabase
-
-        db = TrackDatabase()
-        if formatters is None:
-            formatters = build_formatters()  # no bullseye
-        inp = io.StringIO("\n".join(commands) + "\n")
-        out = io.StringIO()
-        shell = InteractiveShell(
-            track_db=db, formatters=formatters,
-            input_stream=inp, output_stream=out,
-        )
-        shell.run()
-        return out.getvalue()
-
     def test_bullseye_without_ref_prompts_to_set(self) -> None:
-        output = self._run_shell_commands(["bullseye 12345", "quit"])
+        output = _run_shell(["bullseye 12345", "quit"])
         assert "No bullseye reference point set" in output
         assert "bullseye set LAT,LON" in output
 
     def test_bullseye_set_registers_formatter(self) -> None:
-        output = self._run_shell_commands([
+        output = _run_shell([
             "bullseye set 37.0,-116.0",
             "quit",
         ])
@@ -726,7 +753,7 @@ class TestShellBullseyeFlow:
 
     def test_bullseye_set_then_use(self) -> None:
         # Set ref, then query a track (won't find it, but should not say "not available")
-        output = self._run_shell_commands([
+        output = _run_shell([
             "bullseye set 37.0,-116.0",
             "bullseye 12345",
             "quit",
@@ -737,26 +764,26 @@ class TestShellBullseyeFlow:
         assert "No track found" in output
 
     def test_bullseye_set_invalid_coords(self) -> None:
-        output = self._run_shell_commands(["bullseye set abc", "quit"])
+        output = _run_shell(["bullseye set abc", "quit"])
         assert "Invalid coordinates" in output
 
     def test_bullseye_set_no_args(self) -> None:
-        output = self._run_shell_commands(["bullseye set", "quit"])
+        output = _run_shell(["bullseye set", "quit"])
         assert "Usage: bullseye set LAT,LON" in output
 
     def test_format_bullseye_without_ref_guides_user(self) -> None:
-        output = self._run_shell_commands(["format bullseye", "quit"])
+        output = _run_shell(["format bullseye", "quit"])
         assert "requires a reference point" in output
         assert "bullseye set LAT,LON" in output
 
     def test_format_list_shows_bullseye_hint_when_unset(self) -> None:
-        output = self._run_shell_commands(["format", "quit"])
+        output = _run_shell(["format", "quit"])
         assert "BULLSEYE (requires: bullseye set LAT,LON)" in output
 
     def test_format_list_shows_bullseye_normally_when_set(self) -> None:
         from link16_parser.output import build_formatters
         formatters = build_formatters(bullseye_lat=37.0, bullseye_lon=-116.0)
-        output = self._run_shell_commands(["format", "quit"], formatters=formatters)
+        output = _run_shell(["format", "quit"], formatters=formatters)
         # Should show BULLSEYE without the hint
         assert "BULLSEYE" in output
         assert "(requires:" not in output
@@ -764,14 +791,419 @@ class TestShellBullseyeFlow:
     def test_bullseye_no_args_shows_ref_and_usage(self) -> None:
         from link16_parser.output import build_formatters
         formatters = build_formatters(bullseye_lat=37.0, bullseye_lon=-116.0)
-        output = self._run_shell_commands(["bullseye", "quit"], formatters=formatters)
+        output = _run_shell(["bullseye", "quit"], formatters=formatters)
         assert "Bullseye reference: 37.0000, -116.0000" in output
         assert "Usage: bullseye <id>" in output
 
     def test_format_bullseye_after_set(self) -> None:
-        output = self._run_shell_commands([
+        output = _run_shell([
             "bullseye set 40.0,-80.0",
             "format bullseye",
             "quit",
         ])
         assert "Default format set to: BULLSEYE" in output
+
+
+# ---------------------------------------------------------------------------
+# Shell — command tests
+# ---------------------------------------------------------------------------
+
+
+class TestShellCommands:
+    """Tests for CLI shell commands: list, search, status, format, info, etc."""
+
+    @staticmethod
+    def _sample_tracks() -> list[Track]:
+        """Build a small set of test tracks."""
+        return [
+            Track(
+                stn=100,
+                track_number="T0100",
+                callsign="VIPER01",
+                identity=Identity.FRIEND,
+                platform=PlatformId(generic_type="FTR", specific_type="F16C", nationality="US"),
+                position=Position(lat=36.0, lon=-115.0, alt_m=7620.0),
+                heading_deg=90.0,
+                speed_kph=900.0,
+                last_updated=datetime(2025, 3, 15, 14, 30, 0, tzinfo=timezone.utc),
+                message_count=1,
+            ),
+            Track(
+                stn=200,
+                track_number="T0200",
+                callsign="SNAKE11",
+                identity=Identity.HOSTILE,
+                platform=PlatformId(generic_type="FTR", specific_type="SU35", nationality="RU"),
+                position=Position(lat=37.0, lon=-116.0, alt_m=9000.0),
+                heading_deg=270.0,
+                speed_kph=1100.0,
+                last_updated=datetime(2025, 3, 15, 14, 31, 0, tzinfo=timezone.utc),
+                message_count=1,
+                status=TrackStatus.STALE,
+            ),
+            Track(
+                stn=300,
+                callsign="TEXACO1",
+                identity=Identity.FRIEND,
+                platform=PlatformId(generic_type="TNK", specific_type="KC135", nationality="US"),
+                last_updated=datetime(2025, 3, 15, 14, 25, 0, tzinfo=timezone.utc),
+                message_count=1,
+            ),
+        ]
+
+    # -- list --
+
+    def test_list_no_tracks(self) -> None:
+        output = _run_shell(["list", "quit"])
+        assert "No tracks." in output
+
+    def test_list_shows_tracks_and_count(self) -> None:
+        output = _run_shell(["list", "quit"], tracks=self._sample_tracks())
+        assert "VIPER01" in output
+        assert "SNAKE11" in output
+        assert "TEXACO1" in output
+        assert "--- 3 tracks ---" in output
+
+    def test_list_shows_header(self) -> None:
+        output = _run_shell(["list", "quit"], tracks=self._sample_tracks())
+        assert "STN" in output
+        assert "CALLSIGN" in output
+        assert "STATUS" in output
+
+    def test_list_singular_track_count(self) -> None:
+        tracks = [self._sample_tracks()[0]]
+        output = _run_shell(["list", "quit"], tracks=tracks)
+        assert "--- 1 track ---" in output
+
+    # -- search --
+
+    def test_search_by_identity(self) -> None:
+        output = _run_shell(["search hostile", "quit"], tracks=self._sample_tracks())
+        assert "SNAKE11" in output
+        assert "VIPER01" not in output
+        assert "--- 1 track ---" in output
+
+    def test_search_by_callsign(self) -> None:
+        output = _run_shell(["search viper", "quit"], tracks=self._sample_tracks())
+        assert "VIPER01" in output
+        assert "SNAKE11" not in output
+
+    def test_search_by_platform_type(self) -> None:
+        output = _run_shell(["search F16C", "quit"], tracks=self._sample_tracks())
+        assert "VIPER01" in output
+        assert "SNAKE11" not in output
+
+    def test_search_by_status(self) -> None:
+        # All tracks inserted via update() start as ACTIVE
+        output = _run_shell(["search active", "quit"], tracks=self._sample_tracks())
+        assert "VIPER01" in output
+        assert "--- 3 tracks ---" in output
+
+    def test_search_no_results(self) -> None:
+        output = _run_shell(["search BOGUS", "quit"], tracks=self._sample_tracks())
+        assert "No tracks matching 'BOGUS'" in output
+
+    def test_search_no_args(self) -> None:
+        output = _run_shell(["search", "quit"])
+        assert "Usage: search <query>" in output
+
+    # -- status --
+
+    def test_status_with_tracks(self) -> None:
+        output = _run_shell(["status", "quit"], tracks=self._sample_tracks())
+        assert "Tracks:" in output
+        assert "3" in output
+        assert "Identity:" in output
+        assert "friend" in output
+        assert "hostile" in output
+        assert "Format:" in output
+
+    def test_status_no_tracks(self) -> None:
+        output = _run_shell(["status", "quit"])
+        assert "Tracks:   0" in output
+
+    def test_status_shows_bullseye_when_set(self) -> None:
+        from link16_parser.output import build_formatters
+        fmts = build_formatters(bullseye_lat=37.0, bullseye_lon=-116.0)
+        output = _run_shell(["status", "quit"], formatters=fmts)
+        assert "Bullseye: 37.0000, -116.0000" in output
+
+    # -- format --
+
+    def test_format_alias_9line(self) -> None:
+        output = _run_shell(["format 9line", "quit"])
+        assert "Default format set to: 9-LINE" in output
+
+    def test_format_alias_nineline(self) -> None:
+        output = _run_shell(["format nineline", "quit"])
+        assert "Default format set to: 9-LINE" in output
+
+    def test_format_unknown(self) -> None:
+        output = _run_shell(["format BOGUS", "quit"])
+        assert "Unknown format: BOGUS" in output
+
+    # -- report --
+
+    def test_report_uses_current_format(self) -> None:
+        output = _run_shell(
+            ["format json", "report 100", "quit"],
+            tracks=self._sample_tracks(),
+        )
+        assert "Default format set to: JSON" in output
+        assert '"stn":100' in output
+
+    # -- info --
+
+    def test_info_shows_all_fields(self) -> None:
+        output = _run_shell(["info 100", "quit"], tracks=self._sample_tracks())
+        assert "STN:" in output
+        assert "100" in output
+        assert "VIPER01" in output
+        assert "FRIEND" in output
+        assert "F16C" in output
+
+    def test_info_no_args(self) -> None:
+        output = _run_shell(["info", "quit"])
+        assert "Usage: info <identifier>" in output
+
+    def test_info_not_found(self) -> None:
+        output = _run_shell(["info 99999", "quit"])
+        assert "No track found" in output
+
+    # -- help --
+
+    def test_help_contains_all_commands(self) -> None:
+        output = _run_shell(["help", "quit"])
+        for cmd in ["list", "search", "status", "report", "tacrep", "9line",
+                     "json", "csv", "bullseye", "info", "export", "config",
+                     "debug", "format", "help", "quit"]:
+            assert cmd in output
+
+    def test_help_shows_available_formats(self) -> None:
+        output = _run_shell(["help", "quit"])
+        assert "TACREP" in output
+        assert "JSON" in output
+
+    def test_help_shows_identifier_resolution(self) -> None:
+        output = _run_shell(["help", "quit"])
+        assert "octal" in output
+        assert "case-insensitive" in output
+
+    # -- error handling --
+
+    def test_unknown_command(self) -> None:
+        output = _run_shell(["boguscmd", "quit"])
+        assert "Unknown command: boguscmd" in output
+
+    def test_shlex_parse_error(self) -> None:
+        output = _run_shell(["report 'unmatched", "quit"])
+        assert "Parse error" in output
+        assert "unmatched quotes" in output.lower() or "No closing quotation" in output
+
+    # -- quit / EOF --
+
+    def test_quit_exits(self) -> None:
+        output = _run_shell(["quit"])
+        # Should not hang — if we get output, the loop exited
+        assert "Link 16 Parser" in output
+
+    def test_eof_exits(self) -> None:
+        # Empty input triggers EOF
+        import io
+        from link16_parser.cli.shell import InteractiveShell
+        from link16_parser.output import build_formatters
+        from link16_parser.tracks.database import TrackDatabase
+
+        out = io.StringIO()
+        shell = InteractiveShell(
+            track_db=TrackDatabase(),
+            formatters=build_formatters(),
+            input_stream=io.StringIO(""),  # immediate EOF
+            output_stream=out,
+        )
+        shell.run()
+        assert "Exiting" in out.getvalue()
+
+    # -- truncation --
+
+    def test_long_callsign_truncated(self) -> None:
+        track = Track(
+            stn=100,
+            callsign="VERYLONGCALLSIGN99",
+            last_updated=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            message_count=1,
+        )
+        output = _run_shell(["list", "quit"], tracks=[track])
+        assert "VERYLONGCAL~" in output
+        assert "VERYLONGCALLSIGN99" not in output
+
+    # -- export --
+
+    def test_export_json_all_tracks(self, tmp_path: object) -> None:
+        import json
+        import pathlib
+        filepath = pathlib.Path(str(tmp_path)) / "out.json"
+        output = _run_shell(
+            [f"export json {filepath}", "quit"],
+            tracks=self._sample_tracks(),
+        )
+        assert "Exported 3 tracks" in output
+        lines = filepath.read_text().strip().splitlines()
+        assert len(lines) == 3
+        parsed = json.loads(lines[0])
+        assert "stn" in parsed
+
+    def test_export_csv_with_header(self, tmp_path: object) -> None:
+        import pathlib
+        filepath = pathlib.Path(str(tmp_path)) / "out.csv"
+        output = _run_shell(
+            [f"export csv {filepath}", "quit"],
+            tracks=self._sample_tracks(),
+        )
+        assert "Exported 3 tracks" in output
+        lines = filepath.read_text().strip().splitlines()
+        # Header + 3 data rows
+        assert len(lines) == 4
+        assert "stn" in lines[0].lower()
+
+    def test_export_with_search_filter(self, tmp_path: object) -> None:
+        import json
+        import pathlib
+        filepath = pathlib.Path(str(tmp_path)) / "hostile.json"
+        output = _run_shell(
+            [f"export json {filepath} hostile", "quit"],
+            tracks=self._sample_tracks(),
+        )
+        assert "Exported 1 track" in output
+        lines = filepath.read_text().strip().splitlines()
+        assert len(lines) == 1
+        parsed = json.loads(lines[0])
+        assert parsed["identity"] == "HOSTILE"
+
+    def test_export_no_args(self) -> None:
+        output = _run_shell(["export", "quit"])
+        assert "Usage: export" in output
+
+    def test_export_bad_path(self) -> None:
+        output = _run_shell(
+            ["export json /nonexistent/dir/file.json", "quit"],
+            tracks=self._sample_tracks(),
+        )
+        assert "Error writing" in output
+
+    # -- config --
+
+    def test_config_show(self) -> None:
+        output = _run_shell(["config", "quit"])
+        assert "format:" in output
+        assert "TACREP" in output
+        assert "originator:" in output
+        assert "classification:" in output
+
+    def test_config_originator(self) -> None:
+        output = _run_shell(
+            ["config originator CTF124", "tacrep 100", "quit"],
+            tracks=self._sample_tracks(),
+        )
+        assert "originator set to: CTF124" in output
+        assert "CTF124" in output
+
+    def test_config_classification(self) -> None:
+        output = _run_shell(
+            ["config classification SECRET", "tacrep 100", "quit"],
+            tracks=self._sample_tracks(),
+        )
+        assert "classification set to: SECRET" in output
+        assert "SECRET" in output
+
+    def test_config_unknown_key(self) -> None:
+        output = _run_shell(["config bogus", "quit"])
+        assert "Unknown config key" in output
+
+    # -- debug --
+
+    def test_debug_shows_history(self) -> None:
+        output = _run_shell(["debug 100", "quit"], tracks=self._sample_tracks())
+        assert "0o00144" in output  # octal STN for 100
+        assert "Messages:" in output
+        assert "J3.2" in output
+        assert "Recent messages" in output
+
+    def test_debug_no_track(self) -> None:
+        output = _run_shell(["debug 99999", "quit"])
+        assert "No track found" in output
+
+    def test_debug_no_args(self) -> None:
+        output = _run_shell(["debug", "quit"])
+        assert "Usage: debug" in output
+
+    # -- list with aging --
+
+    def test_list_hides_dropped(self) -> None:
+        """Default list should hide DROPPED tracks."""
+        import io
+        from link16_parser.cli.shell import InteractiveShell
+        from link16_parser.output import build_formatters
+        from link16_parser.tracks.database import TrackDatabase
+
+        db = TrackDatabase(stale_ttl=60.0, drop_ttl=60.0)
+        tracks = self._sample_tracks()
+        for t in tracks:
+            msg = Link16Message(
+                stn=t.stn, msg_type="J3.2",
+                timestamp=t.last_updated or datetime(2025, 1, 1, tzinfo=timezone.utc),
+                callsign=t.callsign, identity=t.identity, platform=t.platform,
+                position=t.position, fields=dict(t.fields) if t.fields else {},
+            )
+            db.update(msg)
+        # Manually drop one track
+        with db._lock:  # pyright: ignore[reportPrivateUsage]
+            db._tracks[200].status = TrackStatus.DROPPED  # pyright: ignore[reportPrivateUsage]
+
+        inp = io.StringIO("list\nquit\n")
+        out = io.StringIO()
+        shell = InteractiveShell(track_db=db, formatters=build_formatters(),
+                                 input_stream=inp, output_stream=out)
+        shell.run()
+        output = out.getvalue()
+        assert "VIPER01" in output
+        assert "SNAKE11" not in output  # dropped, hidden
+
+    def test_list_all_shows_dropped(self) -> None:
+        """'list all' should include DROPPED tracks."""
+        import io
+        from link16_parser.cli.shell import InteractiveShell
+        from link16_parser.output import build_formatters
+        from link16_parser.tracks.database import TrackDatabase
+
+        db = TrackDatabase(stale_ttl=60.0, drop_ttl=60.0)
+        tracks = self._sample_tracks()
+        for t in tracks:
+            msg = Link16Message(
+                stn=t.stn, msg_type="J3.2",
+                timestamp=t.last_updated or datetime(2025, 1, 1, tzinfo=timezone.utc),
+                callsign=t.callsign, identity=t.identity, platform=t.platform,
+                position=t.position, fields=dict(t.fields) if t.fields else {},
+            )
+            db.update(msg)
+        with db._lock:  # pyright: ignore[reportPrivateUsage]
+            db._tracks[200].status = TrackStatus.DROPPED  # pyright: ignore[reportPrivateUsage]
+
+        inp = io.StringIO("list all\nquit\n")
+        out = io.StringIO()
+        shell = InteractiveShell(track_db=db, formatters=build_formatters(),
+                                 input_stream=inp, output_stream=out)
+        shell.run()
+        output = out.getvalue()
+        assert "VIPER01" in output
+        assert "SNAKE11" in output  # dropped but visible with 'all'
+
+    def test_config_stale_ttl(self) -> None:
+        output = _run_shell(["config stale-ttl 60", "config", "quit"])
+        assert "stale-ttl set to: 60s" in output
+        assert "stale-ttl:      60s" in output
+
+    def test_config_drop_ttl(self) -> None:
+        output = _run_shell(["config drop-ttl 180", "config", "quit"])
+        assert "drop-ttl set to: 180s" in output
+        assert "drop-ttl:       180s" in output

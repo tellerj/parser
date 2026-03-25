@@ -36,6 +36,22 @@ class TacrepFormatter:
     def name(self) -> str:
         return "TACREP"
 
+    @property
+    def originator(self) -> str:
+        return self._originator
+
+    @originator.setter
+    def originator(self, value: str) -> None:
+        self._originator = value
+
+    @property
+    def classification(self) -> str:
+        return self._classification
+
+    @classification.setter
+    def classification(self, value: str) -> None:
+        self._classification = value
+
     def format(self, track: Track) -> str:
         """Produce a 5-line AIROP TACREP for the given track.
 

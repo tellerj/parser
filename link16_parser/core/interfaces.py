@@ -25,7 +25,7 @@ from link16_parser.core.types import Link16Message, RawJWord, Track
 # Re-export for convenience — modules that import from core.interfaces
 # can also pick up the TrackListener type alias.
 from typing import Callable
-TrackListener = Callable[[Track, Link16Message], None]
+TrackListener = Callable[[Track, Link16Message | None], None]
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +261,7 @@ class OutputSink(Protocol):
         """
         ...
 
-    def on_track_update(self, track: Track, message: Link16Message) -> None:
+    def on_track_update(self, track: Track, message: Link16Message | None) -> None:
         """Handle a track update event.
 
         This is the method registered with ``TrackDatabase.on_update()``.
@@ -271,6 +271,8 @@ class OutputSink(Protocol):
 
         Args:
             track: The updated track (post-merge state).
-            message: The ``Link16Message`` that triggered the update.
+            message: The ``Link16Message`` that triggered the update,
+                or ``None`` for aging transitions (ACTIVE -> STALE,
+                STALE -> DROPPED).
         """
         ...

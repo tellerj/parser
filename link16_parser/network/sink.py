@@ -55,7 +55,7 @@ class NetworkSink:
         self._port = port
         self._protocol = protocol.lower()
         self._formatter = formatter
-        self._queue: queue.Queue[tuple[Track, Link16Message] | None] = queue.Queue(maxsize=queue_size)
+        self._queue: queue.Queue[tuple[Track, Link16Message | None] | None] = queue.Queue(maxsize=queue_size)
         self._socket: socket.socket | None = None
         self._sender_thread: threading.Thread | None = None
         self._running = False
@@ -135,7 +135,7 @@ class NetworkSink:
                 self.name, self._drop_count,
             )
 
-    def on_track_update(self, track: Track, message: Link16Message) -> None:
+    def on_track_update(self, track: Track, message: Link16Message | None) -> None:
         """Enqueue a track snapshot for network delivery.
 
         Called inside the ``TrackDatabase`` lock. Snapshots the track
@@ -145,7 +145,8 @@ class NetworkSink:
 
         Args:
             track: The updated track (post-merge state).
-            message: The ``Link16Message`` that triggered the update.
+            message: The ``Link16Message`` that triggered the update,
+                or ``None`` for aging transitions.
         """
         if self._formatter is None:
             return

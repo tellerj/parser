@@ -100,7 +100,7 @@ flowchart LR
 | **Ingestion** | `ingestion/` | `PacketSource` | PCAP bytes (file or pipe) | `(float, bytes)` tuples | Strips Ethernet/IP headers. Optional `--port` filter. |
 | **Encapsulation** | `encapsulation/` | `EncapsulationDecoder` | UDP/TCP payload bytes | `list[RawJWord]` | Pluggable: SIMPLE, SISO-J, JREAP-C (plugin), Auto |
 | **Link 16** | `link16/` | `MessageDecoder` | `list[RawJWord]` | `list[Link16Message]` | Header parsing (public) + JSON-driven message decoding (injected at build/runtime) |
-| **Tracks** | `tracks/` | — | `Link16Message` | `Track` (stored) | In-memory, thread-safe, keyed by STN. Push via `on_update()`. |
+| **Tracks** | `tracks/` | — | `Link16Message` | `Track` (stored) | In-memory, thread-safe, keyed by STN. Push via `on_update()`. Optional TTL-based aging (ACTIVE → STALE → DROPPED). |
 | **Output** | `output/` | `OutputFormatter` | `Track` | `str` | Pluggable: TACREP, 9-LINE, JSON, CSV, BULLSEYE |
 | **CLI** | `cli/` | — | User commands | Formatted reports | Pull-based: queries Tracks, uses Output to format |
 | **Network** | `network/` | `OutputSink` | `Track` (via callback) | Bytes over TCP/UDP | Push-based: uses Output to format, streams to remote endpoint |
@@ -145,9 +145,11 @@ sequenceDiagram
     participant Main as main()
     participant Ingest as Ingestion Thread
     participant DB as TrackDatabase
+    participant Aging as Aging Thread
     participant NetSink as NetworkSink Sender Thread
     participant Shell as InteractiveShell
 
+    Main->>DB: start_aging (daemon thread)
     Main->>NetSink: start (daemon thread, optional)
     Main->>Ingest: start (daemon thread)
     Main->>Shell: run (foreground)
@@ -159,6 +161,12 @@ sequenceDiagram
         Ingest->>DB: update(message) [acquires lock]
         DB->>DB: notify on_update listeners
         DB-->>NetSink: on_track_update → enqueue
+    end
+
+    loop every sweep_interval (aging)
+        Aging->>DB: sweep_aging() [acquires lock]
+        DB->>DB: transition ACTIVE→STALE→DROPPED
+        DB-->>NetSink: on_track_update(track, None) → enqueue
     end
 
     loop background (NetworkSink sender)
@@ -176,13 +184,18 @@ sequenceDiagram
 
     Shell->>Main: shell.run() returns
     Main->>Ingest: stop_event.set()
+    Main->>DB: stop_aging()
     Main->>NetSink: stop()
 ```
 
-The system uses up to three threads:
+The system uses up to four threads:
 
 - **Ingestion thread** (daemon): reads packets, decodes, updates the
   track database. Sole writer to the DB.
+- **Track aging thread** (daemon): periodic sweep that transitions
+  tracks ACTIVE → STALE (after `stale_ttl`, default 120s) → DROPPED
+  (after `stale_ttl + drop_ttl`, default 420s). Notifies listeners
+  with `message=None`. New messages resurrect stale/dropped tracks.
 - **CLI thread** (foreground): reads user commands, queries the DB.
   Sole interactive reader.
 - **NetworkSink sender thread** (daemon, optional): drains a queue of
@@ -337,6 +350,18 @@ TCP/UDP) alongside the pull-based CLI. The `on_track_update()` callback
 runs inside the DB lock, so sinks must be non-blocking — `NetworkSink`
 uses a queue + background sender thread to achieve this.
 
+**TTL-based track aging.** A background daemon thread inside
+`TrackDatabase` periodically sweeps tracks and transitions them based
+on silence duration. ACTIVE → STALE after `stale_ttl` (default 120s,
+~10 missed PPLI cycles). STALE → DROPPED after `stale_ttl + drop_ttl`
+(default 420s total). Dropped tracks remain in the database for history
+queries but are hidden from `list` by default (`list all` shows them).
+Aging transitions notify listeners with `message=None`, enabling sinks
+to react to status changes. A new message arriving for a stale or
+dropped track automatically resurrects it to ACTIVE. TTLs are
+configurable at construction and at runtime via the CLI `config`
+command.
+
 ---
 
 ## Design Considerations for Future Work
@@ -345,15 +370,6 @@ These are capabilities the architecture has been designed to accommodate
 but that aren't built yet. Each entry describes *where the seam is* —
 the module boundary or interface that would absorb the change — so that
 future work extends the system rather than restructuring it.
-
-**Track lifecycle (aging / expiry).** The `Track` dataclass carries a
-`status` field (`ACTIVE` / `STALE` / `DROPPED`) and a `last_updated`
-timestamp. Today all tracks are `ACTIVE` forever. A TTL-based aging
-policy would live inside `TrackDatabase` — a periodic sweep that
-transitions tracks to `STALE` after N minutes without an update, then
-`DROPPED` after a further interval. Formatters and the CLI can filter
-on `status` without any interface changes. A pre-drop notification to
-sinks (via `on_update()`) would let a durable store capture final state.
 
 **Durable storage / mission replay.** The tool is a stream processor —
 PCAP in, structured data out — with no persistence across runs. A
@@ -411,7 +427,8 @@ link16-parser/
 │   │       ├── loader.py              ← JSON loading + directory resolution
 │   │       └── schema.py             ← JSON definition validation
 │   ├── tracks/
-│   │   └── database.py          ← in-memory track store
+│   │   ├── __init__.py          ← exports TrackDatabase
+│   │   └── database.py          ← in-memory track store + TTL aging
 │   ├── output/
 │   │   ├── __init__.py          ← "How to add an output format"
 │   │   ├── coords.py            ← decimal degrees ↔ military grid + shared utils
@@ -424,6 +441,7 @@ link16-parser/
 │   │   ├── __init__.py          ← "How to add a network sink"
 │   │   └── sink.py              ← TCP/UDP streaming sink
 │   └── cli/
+│       ├── __init__.py          ← exports InteractiveShell
 │       └── shell.py             ← interactive CLI shell
 ├── scripts/
 │   └── validate_definitions.py  ← standalone JSON definition validator

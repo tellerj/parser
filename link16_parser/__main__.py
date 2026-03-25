@@ -212,6 +212,7 @@ def main() -> None:
     encap_decoder = build_decoder(args.encap)
     jword_parser = build_parser(definitions_dir=args.definitions_dir)
     track_db = TrackDatabase()
+    track_db.start_aging()
 
     # Parse bullseye reference point
     bull_lat: float | None = None
@@ -299,21 +300,29 @@ def main() -> None:
                 pass
             finally:
                 stop_event.set()
+                track_db.stop_aging()
                 ingestion_thread.join(timeout=2.0)
                 if network_sink is not None:
                     network_sink.stop()
             return
 
+    # In pipe mode, redirect sys.stdin to /dev/tty so the shell's input()
+    # call gets full readline support (history, tab completion, line editing).
+    # PipeSource is already iterating on the original stdin buffer in the
+    # ingestion thread — reassigning sys.stdin doesn't affect it.
+    if tty_stream is not None:
+        sys.stdin = tty_stream
+
     # Run interactive shell in foreground
     shell = InteractiveShell(
         track_db=track_db,
         formatters=formatters,
-        input_stream=tty_stream,
     )
     try:
         shell.run()
     finally:
         stop_event.set()
+        track_db.stop_aging()
         ingestion_thread.join(timeout=2.0)
         if network_sink is not None:
             network_sink.stop()

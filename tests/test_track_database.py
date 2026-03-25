@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from link16_parser.core import Identity, Link16Message, PlatformId, Position, Track
+from link16_parser.core import Identity, Link16Message, PlatformId, Position, Track, TrackStatus
 from link16_parser.tracks import TrackDatabase
 
 TS = datetime(2024, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
@@ -61,7 +61,7 @@ class TestUpdate:
         assert track.callsign == "VIPER02"
 
     def test_listener_receives_notification(self, track_db: TrackDatabase) -> None:
-        received: list[tuple[Track, Link16Message]] = []
+        received: list[tuple[Track, Link16Message | None]] = []
         track_db.on_update(lambda t, m: received.append((t, m)))
 
         msg = _msg(stn=100)
@@ -146,6 +146,26 @@ class TestSubfieldMerge:
         assert track.position.alt_m == 5000.0   # preserved
 
 
+class TestMessageHistory:
+    def test_history_stored(self, track_db: TrackDatabase) -> None:
+        track_db.update(_msg(stn=100))
+        track_db.update(_msg(stn=100, msg_type="J3.2", timestamp=TS2))
+        history = track_db.message_history(100)
+        assert len(history) == 2
+        assert history[0].msg_type == "J2.2"
+        assert history[1].msg_type == "J3.2"
+
+    def test_history_capped_at_max(self, track_db: TrackDatabase) -> None:
+        for i in range(60):
+            ts = datetime(2024, 3, 15, 12, i % 60, 0, tzinfo=timezone.utc)
+            track_db.update(_msg(stn=100, timestamp=ts))
+        history = track_db.message_history(100)
+        assert len(history) == 50
+
+    def test_history_empty_for_unknown_stn(self, track_db: TrackDatabase) -> None:
+        assert track_db.message_history(99999) == []
+
+
 class TestListenerSnapshot:
     def test_listener_receives_snapshot_not_mutable_ref(
         self, track_db: TrackDatabase,
@@ -160,3 +180,78 @@ class TestListenerSnapshot:
         assert len(received) == 2
         assert received[0].callsign == "VIPER01"  # not mutated by second update
         assert received[1].callsign == "VIPER02"
+
+
+class TestAging:
+    def test_sweep_marks_stale(self) -> None:
+        db = TrackDatabase(stale_ttl=60.0, drop_ttl=120.0)
+        old_ts = datetime.now(timezone.utc) - timedelta(seconds=90)
+        db.update(_msg(stn=100, timestamp=old_ts))
+
+        db.sweep_aging()
+
+        track = db.get_by_stn(100)
+        assert track is not None
+        assert track.status == TrackStatus.STALE
+
+    def test_sweep_marks_dropped(self) -> None:
+        db = TrackDatabase(stale_ttl=60.0, drop_ttl=60.0)
+        # Age > stale_ttl + drop_ttl = 120s
+        old_ts = datetime.now(timezone.utc) - timedelta(seconds=200)
+        db.update(_msg(stn=100, timestamp=old_ts))
+
+        db.sweep_aging()  # ACTIVE -> STALE
+        db.sweep_aging()  # STALE -> DROPPED (age still > 120)
+
+        track = db.get_by_stn(100)
+        assert track is not None
+        assert track.status == TrackStatus.DROPPED
+
+    def test_active_not_swept(self) -> None:
+        db = TrackDatabase(stale_ttl=60.0, drop_ttl=120.0)
+        recent_ts = datetime.now(timezone.utc) - timedelta(seconds=10)
+        db.update(_msg(stn=100, timestamp=recent_ts))
+
+        db.sweep_aging()
+
+        track = db.get_by_stn(100)
+        assert track is not None
+        assert track.status == TrackStatus.ACTIVE
+
+    def test_resurrection(self) -> None:
+        db = TrackDatabase(stale_ttl=60.0, drop_ttl=120.0)
+        old_ts = datetime.now(timezone.utc) - timedelta(seconds=90)
+        db.update(_msg(stn=100, timestamp=old_ts))
+        db.sweep_aging()
+        assert db.get_by_stn(100).status == TrackStatus.STALE  # type: ignore[union-attr]
+
+        # New message arrives — track should resurrect
+        db.update(_msg(stn=100, timestamp=datetime.now(timezone.utc)))
+        assert db.get_by_stn(100).status == TrackStatus.ACTIVE  # type: ignore[union-attr]
+
+    def test_aging_notifies_listeners(self) -> None:
+        db = TrackDatabase(stale_ttl=60.0, drop_ttl=120.0)
+        received: list[tuple[Track, Link16Message | None]] = []
+        db.on_update(lambda t, m: received.append((t, m)))
+
+        old_ts = datetime.now(timezone.utc) - timedelta(seconds=90)
+        db.update(_msg(stn=100, timestamp=old_ts))
+        received.clear()
+
+        db.sweep_aging()
+
+        assert len(received) == 1
+        assert received[0][1] is None  # no message for aging
+        assert received[0][0].status == TrackStatus.STALE
+
+    def test_aging_skips_no_last_updated(self) -> None:
+        db = TrackDatabase(stale_ttl=60.0, drop_ttl=120.0)
+        # Manually insert a track with no last_updated (pyright: testing internals)
+        with db._lock:  # pyright: ignore[reportPrivateUsage]
+            db._tracks[999] = Track(stn=999)  # pyright: ignore[reportPrivateUsage]
+
+        db.sweep_aging()
+
+        track = db.get_by_stn(999)
+        assert track is not None
+        assert track.status == TrackStatus.ACTIVE
