@@ -292,3 +292,141 @@ def make_simple_pcap(
         frame = make_udp_frame(simple_payload)
         frames.append((base_timestamp + i, frame))
     return make_pcap_file(frames)
+
+
+# ---------------------------------------------------------------------------
+# pcapng file builder
+# ---------------------------------------------------------------------------
+
+def pad4(n: int) -> int:
+    """Round *n* up to the next multiple of 4."""
+    return (n + 3) & ~3
+
+
+def make_pcapng_block(block_type: int, body: bytes, endian: str = "<") -> bytes:
+    """Wrap *body* in a pcapng block envelope.
+
+    Layout: BlockType(4) + BlockTotalLength(4) + body(padded) + BlockTotalLength(4).
+    """
+    padded_body = body + b"\x00" * (pad4(len(body)) - len(body))
+    total_length = 4 + 4 + len(padded_body) + 4
+    header = struct.pack(f"{endian}II", block_type, total_length)
+    trailer = struct.pack(f"{endian}I", total_length)
+    return header + padded_body + trailer
+
+
+def make_pcapng_shb(endian: str = "<") -> bytes:
+    """Build a Section Header Block (type 0x0A0D0D0A).
+
+    Byte-Order Magic is written in *endian* order so readers can detect
+    the file's byte order.
+    """
+    bom = struct.pack(f"{endian}I", 0x1A2B3C4D)
+    version = struct.pack(f"{endian}HH", 1, 0)
+    section_length = struct.pack(f"{endian}q", -1)  # unknown
+    body = bom + version + section_length
+    return make_pcapng_block(0x0A0D0D0A, body, endian)
+
+
+def make_pcapng_idb(
+    endian: str = "<",
+    link_type: int = 1,
+    snap_len: int = 0,
+    ts_resolution: int | None = None,
+) -> bytes:
+    """Build an Interface Description Block (type 0x00000001).
+
+    Args:
+        link_type: Link-layer type (1 = Ethernet).
+        snap_len: Maximum captured bytes per packet (0 = unlimited).
+        ts_resolution: ``if_tsresol`` option byte, or ``None`` to omit
+            (reader defaults to microsecond).
+    """
+    # IDB fixed fields: LinkType(2) + Reserved(2) + SnapLen(4)
+    body = struct.pack(f"{endian}HHI", link_type, 0, snap_len)
+
+    if ts_resolution is not None:
+        # Option: type=9 (if_tsresol), length=1, value=1 byte, padded to 4
+        opt = struct.pack(f"{endian}HH", 9, 1) + bytes([ts_resolution]) + b"\x00" * 3
+        # End-of-options
+        opt += struct.pack(f"{endian}HH", 0, 0)
+        body += opt
+
+    return make_pcapng_block(0x00000001, body, endian)
+
+
+def make_pcapng_epb(
+    timestamp: float,
+    frame: bytes,
+    interface_id: int = 0,
+    ts_divisor: float = 1_000_000,
+    endian: str = "<",
+) -> bytes:
+    """Build an Enhanced Packet Block (type 0x00000006).
+
+    Converts *timestamp* (epoch seconds) to a 64-bit integer in units
+    of the interface's timestamp resolution (*ts_divisor*).
+    """
+    raw_ts = int(timestamp * ts_divisor)
+    ts_high = (raw_ts >> 32) & 0xFFFFFFFF
+    ts_low = raw_ts & 0xFFFFFFFF
+    captured_len = len(frame)
+    original_len = len(frame)
+
+    # EPB fixed fields: InterfaceID(4) + TsHigh(4) + TsLow(4) +
+    #                    CapturedLen(4) + OriginalLen(4)
+    header = struct.pack(
+        f"{endian}IIIII",
+        interface_id, ts_high, ts_low, captured_len, original_len,
+    )
+    # Packet data padded to 4-byte boundary (no options)
+    padded_frame = frame + b"\x00" * (pad4(captured_len) - captured_len)
+
+    body = header + padded_frame
+    return make_pcapng_block(0x00000006, body, endian)
+
+
+def make_pcapng_file(
+    frames: list[tuple[float, bytes]],
+    endian: str = "<",
+    ts_resolution: int | None = None,
+) -> bytes:
+    """Build a complete pcapng file from ``(timestamp, ethernet_frame)`` tuples.
+
+    Single-interface file with Ethernet link type. If *ts_resolution* is
+    ``None``, the ``if_tsresol`` option is omitted (reader defaults to
+    microsecond). Use ``6`` for explicit microseconds, ``9`` for nanoseconds.
+    """
+    ts_divisor = 1_000_000  # default microsecond
+    if ts_resolution is not None:
+        if ts_resolution & 0x80:
+            ts_divisor = 2 ** (ts_resolution & 0x7F)
+        else:
+            ts_divisor = 10 ** (ts_resolution & 0x7F)
+
+    parts = [
+        make_pcapng_shb(endian),
+        make_pcapng_idb(endian=endian, ts_resolution=ts_resolution),
+    ]
+    for ts, frame in frames:
+        parts.append(make_pcapng_epb(ts, frame, ts_divisor=ts_divisor, endian=endian))
+
+    return b"".join(parts)
+
+
+def make_simple_pcapng(
+    jwords_per_packet: list[list[bytes]],
+    stn: int = 100,
+    npg: int = 7,
+    base_timestamp: float = 1_700_000_000.0,
+) -> bytes:
+    """Build a complete pcapng with SIMPLE-encapsulated Link 16 packets.
+
+    Mirrors ``make_simple_pcap`` but produces pcapng output.
+    """
+    frames: list[tuple[float, bytes]] = []
+    for i, jwords in enumerate(jwords_per_packet):
+        simple_payload = make_simple_payload(jwords, stn=stn, npg=npg)
+        frame = make_udp_frame(simple_payload)
+        frames.append((base_timestamp + i, frame))
+    return make_pcapng_file(frames)

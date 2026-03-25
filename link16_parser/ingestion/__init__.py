@@ -19,8 +19,7 @@ component's ``AutoDecoder`` identifies packet formats. Currently
 supported:
 
 - **libpcap** (.pcap) — fully implemented.
-- **pcapng** (.pcapng) — detected and routed, but parsing is stubbed
-  out. Gives a clear error with conversion instructions.
+- **pcapng** (.pcapng) — fully supported.
 
 To add a new capture format, implement a ``read_<format>_stream()``
 generator in a new module, then add its magic bytes to the detection
@@ -52,8 +51,7 @@ Existing implementations
 - ``reader.py`` — ``PipeSource``: reads a live capture stream
   from stdin (``tcpdump -w -`` or similar).
 - ``pcap_reader.py`` — libpcap format stream reader.
-- ``pcapng_reader.py`` — pcapng format stream reader (stub, awaiting
-  implementation).
+- ``pcapng_reader.py`` — pcapng format stream reader.
 """
 
 from __future__ import annotations

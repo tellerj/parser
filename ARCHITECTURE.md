@@ -413,7 +413,7 @@ link16-parser/
 │   │   ├── __init__.py          ← "How to add a capture format or source"
 │   │   ├── reader.py            ← FileSource, PipeSource, format auto-detection
 │   │   ├── pcap_reader.py       ← libpcap format stream reader
-│   │   └── pcapng_reader.py     ← pcapng format stream reader (stub)
+│   │   └── pcapng_reader.py     ← pcapng format stream reader
 │   ├── encapsulation/
 │   │   ├── __init__.py          ← decoder registry + plugin loader
 │   │   ├── simple.py            ← STANAG 5602 (fully implemented)

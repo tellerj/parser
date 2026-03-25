@@ -10,8 +10,7 @@ stream I/O utilities are shared across all formats and defined here.
 
 Supported capture formats:
     - libpcap (.pcap) — fully implemented in ``pcap_reader.py``.
-    - pcapng (.pcapng) — detected and routed, but parsing is stubbed
-      out in ``pcapng_reader.py``.
+    - pcapng (.pcapng) — fully implemented in ``pcapng_reader.py``.
 
 Supported frame types:
     - Ethernet II (link-layer type 1, ethertype 0x0800 = IPv4) only.
