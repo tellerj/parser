@@ -26,7 +26,7 @@ Once you have them, drop the decoder modules into `link16_parser/link16/messages
 - Maintains an in-memory track picture, merging updates from multiple message types
 - Formats tracks as **5-line AIROP TACREPs** or **9-LINE** reports
 - Optionally streams formatted output over **TCP or UDP** to a remote endpoint
-- Runs with **zero external dependencies** on any system with Python 3.11+
+- Runs with **zero external dependencies** on any system with Python 3.10+
 
 ## Installation
 
@@ -36,18 +36,18 @@ On a new machine, use the install script — it checks your Python version, inst
 bash install.sh
 ```
 
-For manual installation, or on Windows where `install.sh` is not available, use `python3 -m pip` directly. Prefer this over bare `pip` or `pip3` — on systems with multiple Python versions they may point to different interpreters:
+For manual installation, or on Windows where `install.sh` is not available, use `python3 -m pip` directly with `--user` so pip doesn't need elevated permissions. Prefer `python3 -m pip` over bare `pip` or `pip3` — on systems with multiple Python versions they may point to different interpreters:
 
 ```
-python3 -m pip install -e .          # Linux/Mac
-python -m pip install -e .           # Windows
+python3 -m pip install --user -e .          # Linux/Mac
+python -m pip install --user -e .           # Windows
 ```
 
 For development (adds pytest and pyright):
 
 ```
-python3 -m pip install -e ".[dev]"   # Linux/Mac
-python -m pip install -e ".[dev]"    # Windows
+python3 -m pip install --user -e ".[dev]"   # Linux/Mac
+python -m pip install --user -e ".[dev]"    # Windows
 ```
 
 On Windows, if `link16-parser` is not found after install, add the Python `Scripts` folder to your PATH via System Properties → Environment Variables.
@@ -152,7 +152,7 @@ Add it to PATH permanently:
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
 ```
 
-Or bypass PATH entirely using the module invocation (always works):
+Or bypass PATH entirely using the module invocation (always works). If `link16-parser` is not on your PATH, this form will also print a warning with the exact command to fix it:
 ```
 python3 -m link16_parser --file capture.pcap
 python3 -m link16_parser --pipe
@@ -161,7 +161,7 @@ python3 -m link16_parser --pipe
 **`link16-parser: command not found` — package not installed**
 Install it first:
 ```
-pip install -e .
+python3 -m pip install --user -e .
 ```
 If you used `sudo su` to become root, root has a different Python environment. Run tcpdump as root and pipe to the parser as your normal user instead — no `sudo su` needed:
 ```
