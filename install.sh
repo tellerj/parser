@@ -27,10 +27,18 @@ fi
 
 echo "Python ${PYTHON_VERSION} — OK"
 
+# --- Upgrade pip / setuptools -----------------------------------------------
+# PEP 660 editable installs require setuptools>=64 and pip>=21.3.
+# Upgrade in user space to avoid touching system packages.
+
+echo "Checking build tools..."
+$PYTHON -m pip install --user --upgrade "pip>=21.3" "setuptools>=64" --quiet
+echo "Build tools OK."
+
 # --- Install package --------------------------------------------------------
 
 echo "Installing link16-parser..."
-$PYTHON -m pip install -e . --quiet
+$PYTHON -m pip install --user -e . --quiet
 echo "Package installed."
 
 # --- Ensure ~/.local/bin is on PATH -----------------------------------------

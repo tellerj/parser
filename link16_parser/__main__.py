@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import shutil
 import sys
 import threading
 
@@ -190,7 +191,35 @@ def ingestion_loop(
     logger.info("Ingestion complete: %d packets, %d messages", pkt_count, msg_count)
 
 
+def _warn_if_not_on_path() -> None:
+    if shutil.which("link16-parser") is None:
+        local_bin = os.path.join(os.path.expanduser("~"), ".local", "bin")
+        border = "!" * 66
+        print(f"""
+{border}
+  WARNING: 'link16-parser' IS NOT ON YOUR PATH
+
+  You are running via 'python -m link16_parser', which works, but
+  the 'link16-parser' command itself is not findable in your shell.
+
+  It was most likely installed to: {local_bin}
+  That directory is not in your current PATH.
+
+  Fix it right now:
+    export PATH="$HOME/.local/bin:$PATH"
+
+  Fix it permanently (add to your shell config, then reload):
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+    source ~/.bashrc
+
+  Or re-run the install script, which handles this automatically:
+    ./install.sh
+{border}
+""", file=sys.stderr)
+
+
 def main() -> None:
+    _warn_if_not_on_path()
     parser = build_arg_parser()
     args = parser.parse_args()
 
