@@ -1,7 +1,8 @@
-"""Tests for the output layer: coords, tacrep, and nineline formatters."""
+"""Tests for the output layer: coords, tacrep, nineline, json, csv, and cot formatters."""
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 from link16_parser.core.interfaces import OutputFormatter
@@ -12,6 +13,7 @@ from link16_parser.output.coords import (
     format_dtg,
     position_to_lm,
 )
+from link16_parser.output.cot_format import CotFormatter
 from link16_parser.output.csv_format import CsvFormatter
 from link16_parser.output.json_format import JsonFormatter
 from link16_parser.output.nineline_format import NineLineFormatter
@@ -1207,3 +1209,126 @@ class TestShellCommands:
         output = _run_shell(["config drop-ttl 180", "config", "quit"])
         assert "drop-ttl set to: 180s" in output
         assert "drop-ttl:       180s" in output
+
+
+# ---------------------------------------------------------------------------
+# CotFormatter
+# ---------------------------------------------------------------------------
+
+
+class TestCotFormatter:
+    def _make_track(self, **kwargs: object) -> Track:
+        defaults: dict[str, object] = {
+            "stn": 12345,
+            "position": Position(38.711, -77.147, alt_m=3048.0),
+            "identity": Identity.HOSTILE,
+            "platform": PlatformId(
+                generic_type="FTR",
+                specific_type="F16C",
+                nationality="US",
+            ),
+            "callsign": "RULDOG01",
+            "heading_deg": 270.0,
+            "speed_kph": 650.0,
+            "track_number": "A1234",
+            "last_updated": datetime(2024, 3, 31, 15, 0, 0, tzinfo=timezone.utc),
+            "message_count": 5,
+        }
+        defaults.update(kwargs)
+        return Track(**defaults)  # type: ignore[arg-type]
+
+    def test_name(self) -> None:
+        fmt = CotFormatter()
+        assert fmt.name == "COT"
+
+    def test_full_track_is_valid_xml(self) -> None:
+        fmt = CotFormatter()
+        track = self._make_track()
+        result = fmt.format(track)
+        event = ET.fromstring(result)
+
+        assert event.tag == "event"
+        assert event.get("version") == "2.0"
+        assert event.get("uid") == "link16-12345"
+        assert event.get("type") == "a-h-A"
+        assert event.get("how") == "m-f"
+        # Timestamps should be present and parseable
+        for attr in ("time", "start", "stale"):
+            val = event.get(attr)
+            assert val is not None
+            assert val.endswith("Z")
+        # Stale should be after time
+        time_dt = datetime.fromisoformat(event.get("time").replace("Z", "+00:00"))  # type: ignore[union-attr]
+        stale_dt = datetime.fromisoformat(event.get("stale").replace("Z", "+00:00"))  # type: ignore[union-attr]
+        assert stale_dt > time_dt
+
+    def test_point_element(self) -> None:
+        fmt = CotFormatter()
+        track = self._make_track()
+        event = ET.fromstring(fmt.format(track))
+        point = event.find("point")
+        assert point is not None
+        assert point.get("lat") == "38.711"
+        assert point.get("lon") == "-77.147"
+        assert point.get("hae") == "3048.0"
+        assert point.get("ce") == "9999999"
+        assert point.get("le") == "9999999"
+
+    def test_contact_callsign(self) -> None:
+        fmt = CotFormatter()
+        track = self._make_track()
+        event = ET.fromstring(fmt.format(track))
+        contact = event.find("detail/contact")
+        assert contact is not None
+        assert contact.get("callsign") == "RULDOG01"
+
+    def test_track_speed_converted_to_mps(self) -> None:
+        fmt = CotFormatter()
+        track = self._make_track()
+        event = ET.fromstring(fmt.format(track))
+        trk = event.find("detail/track")
+        assert trk is not None
+        speed = float(trk.get("speed"))  # type: ignore[arg-type]
+        # 650 kph * (1000/3600) ≈ 180.556 m/s
+        assert abs(speed - 650.0 * 1000.0 / 3600.0) < 0.01
+
+    def test_track_heading(self) -> None:
+        fmt = CotFormatter()
+        track = self._make_track()
+        event = ET.fromstring(fmt.format(track))
+        trk = event.find("detail/track")
+        assert trk is not None
+        assert trk.get("course") == "270.0"
+
+    def test_minimal_track_no_position_returns_empty(self) -> None:
+        fmt = CotFormatter()
+        track = Track(stn=100)
+        result = fmt.format(track)
+        assert result == ""
+
+    def test_hostile_type(self) -> None:
+        fmt = CotFormatter()
+        track = self._make_track(identity=Identity.HOSTILE)
+        event = ET.fromstring(fmt.format(track))
+        assert event.get("type") == "a-h-A"
+
+    def test_friend_type(self) -> None:
+        fmt = CotFormatter()
+        track = self._make_track(identity=Identity.FRIEND)
+        event = ET.fromstring(fmt.format(track))
+        assert event.get("type") == "a-f-A"
+
+    def test_single_line_output(self) -> None:
+        fmt = CotFormatter()
+        track = self._make_track()
+        result = fmt.format(track)
+        assert "\n" not in result
+
+    def test_custom_stale_seconds(self) -> None:
+        fmt = CotFormatter(stale_seconds=60)
+        track = self._make_track()
+        event = ET.fromstring(fmt.format(track))
+        time_dt = datetime.fromisoformat(event.get("time").replace("Z", "+00:00"))  # type: ignore[union-attr]
+        stale_dt = datetime.fromisoformat(event.get("stale").replace("Z", "+00:00"))  # type: ignore[union-attr]
+        delta = stale_dt - time_dt
+        assert abs(delta.total_seconds() - 60.0) < 0.01

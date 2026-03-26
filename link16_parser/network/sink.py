@@ -242,6 +242,9 @@ class NetworkSink:
                 )
                 continue
 
+            if not formatted:
+                continue
+
             try:
                 # If the formatter has a header() method (e.g. CSV),
                 # emit it once before the first data row (and again

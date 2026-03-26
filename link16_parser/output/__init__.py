@@ -56,6 +56,7 @@ Existing implementations
 - ``json_format.py``     — NDJSON (machine-readable, structured).
 - ``csv_format.py``      — CSV (machine-readable, flat columns).
 - ``bullseye_format.py`` — Bullseye (bearing/distance from reference point).
+- ``cot_format.py``      — Cursor on Target XML (for ATAK/WinTAK/TAK Server).
 - ``coords.py``          — Coordinate conversion utilities (not a formatter).
 """
 
@@ -63,6 +64,7 @@ from __future__ import annotations
 
 from link16_parser.core.interfaces import OutputFormatter
 from link16_parser.output.bullseye_format import BullseyeFormatter
+from link16_parser.output.cot_format import CotFormatter
 from link16_parser.output.csv_format import CsvFormatter
 from link16_parser.output.json_format import JsonFormatter
 from link16_parser.output.nineline_format import NineLineFormatter
@@ -95,6 +97,7 @@ def build_formatters(
         "9-LINE": NineLineFormatter(),
         "JSON": JsonFormatter(),
         "CSV": CsvFormatter(),
+        "COT": CotFormatter(),
     }
     if bullseye_lat is not None and bullseye_lon is not None:
         formatters["BULLSEYE"] = BullseyeFormatter(
@@ -110,4 +113,5 @@ __all__ = [
     "JsonFormatter",
     "CsvFormatter",
     "BullseyeFormatter",
+    "CotFormatter",
 ]

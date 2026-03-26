@@ -503,7 +503,9 @@ class InteractiveShell:
                 if header_fn is not None:
                     f.write(header_fn() + "\n")
                 for t in tracks:
-                    f.write(formatter.format(t) + "\n")
+                    line = formatter.format(t)
+                    if line:
+                        f.write(line + "\n")
         except OSError as exc:
             self._print(f"Error writing to '{filepath}': {exc}")
             return
