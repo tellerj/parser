@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "link16-parser"
 version = "0.1.0"
 description = "Link 16 PCAP parser and TACREP report generator"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
